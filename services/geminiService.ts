@@ -2,8 +2,17 @@
 import { GoogleGenAI } from "@google/genai";
 import { MarketInsight } from "../types";
 
+const getApiKey = (): string => {
+  try {
+    return (typeof process !== 'undefined' && process.env?.API_KEY) ? process.env.API_KEY : '';
+  } catch {
+    return '';
+  }
+};
+
 export const getMarketAnalysis = async (cryptoName: string): Promise<MarketInsight> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  const apiKey = getApiKey();
+  const ai = new GoogleGenAI({ apiKey });
   
   try {
     const response = await ai.models.generateContent({
@@ -32,7 +41,7 @@ export const getMarketAnalysis = async (cryptoName: string): Promise<MarketInsig
     console.error("Gemini Analysis Error:", error);
     return {
       sentiment: 'Neutral',
-      analysis: "Impossible de charger l'analyse IA. Vérifiez votre connexion.",
+      analysis: "L'analyse IA nécessite une clé API valide. Contactez l'administrateur.",
       sources: []
     };
   }

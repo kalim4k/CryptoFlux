@@ -24,6 +24,10 @@ export interface PaymentStatusResponse {
 }
 
 export const initiateDeposit = async (amount: number, phoneNumber: string, clientName: string): Promise<PaymentResponse> => {
+  // On s'assure que l'URL de retour est propre
+  const currentUrl = new URL(window.location.href);
+  const returnUrl = `${currentUrl.origin}${currentUrl.pathname}`;
+
   const paymentData = {
     totalPrice: amount,
     article: [
@@ -31,7 +35,7 @@ export const initiateDeposit = async (amount: number, phoneNumber: string, clien
     ],
     numeroSend: phoneNumber,
     nomclient: clientName,
-    return_url: window.location.origin + window.location.pathname, // Redirection vers l'app avec le token
+    return_url: returnUrl,
   };
 
   try {
