@@ -28,12 +28,29 @@ const App: React.FC = () => {
   const [appLoading, setAppLoading] = useState(true);
   const [userBalance, setUserBalance] = useState(0);
 
-  // Détection UNIQUE au chargement pour la page cachée /echange
+  // GESTION DU ROUTAGE PAR HASH (Évite les 404)
   useEffect(() => {
-    const path = window.location.pathname;
-    if (path.includes('/echange')) {
-      setActiveTab('echange');
-    }
+    const handleHashRouting = () => {
+      const hash = window.location.hash.replace('#', '');
+      const path = window.location.pathname;
+
+      // Priorité au hash pour la page cachée
+      if (hash === 'echange' || path.includes('/echange')) {
+        setActiveTab('echange');
+      } else if (hash === 'wallet') {
+        setActiveTab('wallet');
+      } else if (hash === 'history') {
+        setActiveTab('history');
+      } else if (hash === 'profile') {
+        setActiveTab('profile');
+      } else {
+        setActiveTab('dashboard');
+      }
+    };
+
+    handleHashRouting();
+    window.addEventListener('hashchange', handleHashRouting);
+    return () => window.removeEventListener('hashchange', handleHashRouting);
   }, []);
 
   const fetchUserProfile = useCallback(async (userId: string) => {
@@ -111,14 +128,20 @@ const App: React.FC = () => {
   const updatePrices = useCallback(async () => {
     const ids = SUPPORTED_CRYPTOS.map(c => c.id);
     const priceData = await fetchRealTimePrices(ids);
-    if (Object.keys(priceData).length > 0) {
+    if (priceData && Object.keys(priceData).length > 0) {
       setCryptos(current => current.map(c => {
         const d = priceData[c.id];
-        return d ? { ...c, price: d.usd, change24h: parseFloat(d.usd_24h_change.toFixed(2)) } : c;
+        return d ? { 
+          ...c, 
+          price: d.usd, 
+          change24h: parseFloat(d.usd_24h_change?.toFixed(2) || '0') 
+        } : c;
       }));
       setLastUpdate(new Date());
       setIsDemoMode(false);
-    } else { setIsDemoMode(true); }
+    } else { 
+      setIsDemoMode(true); 
+    }
     setLoadingPrices(false);
   }, []);
 
@@ -178,17 +201,17 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col pb-24 md:pb-0">
       <nav className="border-b border-white/5 py-4 px-6 flex justify-between items-center sticky top-0 bg-slate-950/80 backdrop-blur-md z-50">
-        <div className="flex items-center space-x-2 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
+        <div className="flex items-center space-x-2 cursor-pointer" onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }}>
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/20">C</div>
           <span className="text-xl font-bold tracking-tight">CryptoFlux</span>
         </div>
         <div className="hidden md:flex items-center space-x-8">
           <div className="flex space-x-8 text-sm font-bold uppercase tracking-widest text-slate-500">
-            <button onClick={() => setActiveTab('dashboard')} className={`transition-colors hover:text-indigo-400 ${activeTab === 'dashboard' ? 'text-indigo-400' : ''}`}>Marché</button>
-            <button onClick={() => setActiveTab('wallet')} className={`transition-colors hover:text-indigo-400 ${activeTab === 'wallet' ? 'text-indigo-400' : ''}`}>Wallet</button>
-            <button onClick={() => setActiveTab('history')} className={`transition-colors hover:text-indigo-400 ${activeTab === 'history' ? 'text-indigo-400' : ''}`}>Historique</button>
+            <button onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'dashboard' ? 'text-indigo-400' : ''}`}>Marché</button>
+            <button onClick={() => { window.location.hash = 'wallet'; setActiveTab('wallet'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'wallet' ? 'text-indigo-400' : ''}`}>Wallet</button>
+            <button onClick={() => { window.location.hash = 'history'; setActiveTab('history'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'history' ? 'text-indigo-400' : ''}`}>Historique</button>
           </div>
-          <button onClick={() => setActiveTab('profile')} className={`w-10 h-10 rounded-full border-2 transition-all flex items-center justify-center overflow-hidden ${activeTab === 'profile' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/10'}`}>
+          <button onClick={() => { window.location.hash = 'profile'; setActiveTab('profile'); }} className={`w-10 h-10 rounded-full border-2 transition-all flex items-center justify-center overflow-hidden ${activeTab === 'profile' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/10'}`}>
             <div className="w-full h-full bg-indigo-600 flex items-center justify-center font-bold text-[10px]">{session.user.email?.substring(0, 2).toUpperCase()}</div>
           </button>
         </div>
@@ -200,19 +223,19 @@ const App: React.FC = () => {
 
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-[100] px-4 pb-6 pt-2 bg-gradient-to-t from-slate-950 via-slate-950/98 to-transparent">
         <div className="glass rounded-2xl flex items-center justify-between p-2 shadow-2xl ring-1 ring-white/5">
-          <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'dashboard' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
+          <button onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'dashboard' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
             <span className="text-[10px] font-black mt-1 uppercase">Marché</span>
           </button>
-          <button onClick={() => setActiveTab('wallet')} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'wallet' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
+          <button onClick={() => { window.location.hash = 'wallet'; setActiveTab('wallet'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'wallet' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             <span className="text-[10px] font-black mt-1 uppercase">Wallet</span>
           </button>
-          <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'history' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
+          <button onClick={() => { window.location.hash = 'history'; setActiveTab('history'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'history' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             <span className="text-[10px] font-black mt-1 uppercase">Historique</span>
           </button>
-          <button onClick={() => setActiveTab('profile')} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'profile' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
+          <button onClick={() => { window.location.hash = 'profile'; setActiveTab('profile'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'profile' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
             <span className="text-[10px] font-black mt-1 uppercase">Profil</span>
           </button>

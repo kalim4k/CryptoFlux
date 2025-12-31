@@ -27,11 +27,16 @@ export const fetchRealTimePrices = async (ids: string[]): Promise<PriceData> => 
     const idsString = ids.join(',');
     const url = `https://api.coingecko.com/api/v3/simple/price?ids=${idsString}&vs_currencies=usd&include_24hr_change=true`;
     const response = await fetch(url);
-    if (response.status === 429) return generateSimulatedData(ids);
-    if (!response.ok) throw new Error(`Status ${response.status}`);
-    return await response.json();
+    
+    if (!response.ok) {
+       console.warn(`CoinGecko API Error: ${response.status}. Using simulated data.`);
+       return generateSimulatedData(ids);
+    }
+    
+    const data = await response.json();
+    return data;
   } catch (error) {
-    console.debug("Info: Mode simulation pour les prix.");
+    console.debug("Info: CoinGecko inaccessible, passage en mode simulation.");
     return generateSimulatedData(ids);
   }
 };
@@ -48,7 +53,6 @@ export const fetchCryptoHistory = async (id: string): Promise<HistoryPoint[]> =>
       price: p[1]
     }));
   } catch (error) {
-    console.debug("Info: Génération d'historique simulé pour", id);
     return generateSimulatedHistory(id);
   }
 };
@@ -57,10 +61,11 @@ const generateSimulatedData = (ids: string[]): PriceData => {
   const simulated: PriceData = {};
   ids.forEach(id => {
     const base = FALLBACK_PRICES[id] || { usd: 1.0, usd_24h_change: 0 };
-    const variation = 1 + (Math.random() * 0.001 - 0.0005);
+    // Simulation légère de mouvement
+    const variation = 1 + (Math.random() * 0.002 - 0.001);
     simulated[id] = {
       usd: base.usd * variation,
-      usd_24h_change: base.usd_24h_change + (Math.random() * 0.1 - 0.05)
+      usd_24h_change: base.usd_24h_change + (Math.random() * 0.2 - 0.1)
     };
   });
   return simulated;
