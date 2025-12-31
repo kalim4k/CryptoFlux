@@ -25,27 +25,27 @@ const App: React.FC = () => {
   const [appLoading, setAppLoading] = useState(true);
   const [userBalance, setUserBalance] = useState(0);
 
-  // ROUTAGE ET REDIRECTION
-  useEffect(() => {
-    const handleHashRouting = () => {
-      const hash = window.location.hash.toLowerCase();
-      if (hash.includes('echange')) {
-        setActiveTab('echange');
-      } else if (hash.includes('wallet')) {
-        setActiveTab('wallet');
-      } else if (hash.includes('history')) {
-        setActiveTab('history');
-      } else if (hash.includes('profile')) {
-        setActiveTab('profile');
-      } else {
-        setActiveTab('dashboard');
-      }
-    };
+  // ROUTAGE ET REDIRECTION BASÉE SUR LE HASH
+  const handleHashRouting = useCallback(() => {
+    const hash = window.location.hash.toLowerCase();
+    if (hash.includes('echange')) {
+      setActiveTab('echange');
+    } else if (hash.includes('wallet')) {
+      setActiveTab('wallet');
+    } else if (hash.includes('history')) {
+      setActiveTab('history');
+    } else if (hash.includes('profile')) {
+      setActiveTab('profile');
+    } else {
+      setActiveTab('dashboard');
+    }
+  }, []);
 
+  useEffect(() => {
     handleHashRouting();
     window.addEventListener('hashchange', handleHashRouting);
     return () => window.removeEventListener('hashchange', handleHashRouting);
-  }, []);
+  }, [handleHashRouting]);
 
   const fetchUserProfile = useCallback(async (userId: string) => {
     const { data, error } = await supabase
@@ -63,29 +63,39 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Initialisation de la session
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
         setSession(session);
         if (session) {
           fetchUserProfile(session.user.id);
-          // Forcer le dashboard à la connexion si aucun hash spécifique
-          if (!window.location.hash) setActiveTab('dashboard');
+          // On s'assure que l'onglet correspond au hash actuel dès le début
+          handleHashRouting();
         }
         setAppLoading(false);
       })
       .catch(() => setAppLoading(false));
 
+    // Gestion du changement d'état d'auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
         fetchUserProfile(session.user.id);
-        setActiveTab('dashboard'); // Redirection vers Marché après login réussi
-        window.location.hash = ''; 
+        
+        // CORRECTION ICI : Ne pas rediriger si on est sur une page spécifique
+        const currentHash = window.location.hash.toLowerCase();
+        if (!currentHash || currentHash === '#' || currentHash === '') {
+          setActiveTab('dashboard');
+          window.location.hash = ''; 
+        } else {
+          // Si un hash existe (ex: #echange), handleHashRouting s'en occupe déjà via l'event
+          handleHashRouting();
+        }
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [fetchUserProfile]);
+  }, [fetchUserProfile, handleHashRouting]);
 
   // CHARGEMENT DES PRIX (COINMARKETCAP)
   const updatePrices = useCallback(async () => {
@@ -150,12 +160,12 @@ const App: React.FC = () => {
 
     setTransactions(prev => [newTx, ...prev]);
     
-    // Notification basique
     alert(`Échange réussi : ${amount} ${from.symbol} convertis en ${toAmount.toFixed(to.id === 'xof' ? 0 : 6)} ${to.symbol}`);
     setActiveTab('wallet');
     window.location.hash = 'wallet';
   };
 
+  // VUE SPECIALE ECHANGE (SANS NAVIGATION STANDARD)
   if (activeTab === 'echange') {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col items-center justify-center p-4">
@@ -169,6 +179,8 @@ const App: React.FC = () => {
   }
 
   if (appLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>;
+  
+  // Auth block après avoir vérifié si on est sur la page Echange (qui a son propre Login)
   if (!session) return <Auth />;
 
   return (
