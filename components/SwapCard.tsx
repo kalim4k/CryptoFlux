@@ -18,7 +18,7 @@ const SwapCard: React.FC<SwapCardProps> = ({ onExecute, cryptos }) => {
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount)) return 0;
     
-    // Find current price from the latest cryptos list to stay real-time
+    // Recherche du prix actuel depuis la liste cryptos mise à jour
     const currentFrom = allOptions.find(o => o.id === fromCurrency.id) || fromCurrency;
     const currentTo = allOptions.find(o => o.id === toCurrency.id) || toCurrency;
 
@@ -108,7 +108,7 @@ const SwapCard: React.FC<SwapCardProps> = ({ onExecute, cryptos }) => {
       </button>
       
       <p className="text-[10px] text-center text-slate-500 uppercase tracking-tighter">
-        Taux mis à jour en direct depuis CoinGecko
+        Taux mis à jour en direct depuis CoinMarketCap
       </p>
     </div>
   );

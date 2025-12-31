@@ -32,9 +32,9 @@ const Dashboard: React.FC<DashboardProps> = ({
             <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">
               Marchés en Direct 
             </h2>
-            <div className={`px-2 py-0.5 rounded-md flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest ${isDemoMode ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${isDemoMode ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400 animate-ping'}`}></span>
-              {isDemoMode ? 'Données de secours' : 'Prix réels CoinGecko'}
+            <div className={`px-2 py-0.5 rounded-md flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest ${isDemoMode ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${isDemoMode ? 'bg-amber-400 animate-pulse' : 'bg-indigo-400 animate-ping'}`}></span>
+              {isDemoMode ? 'Données de secours' : 'Prix réels CoinMarketCap'}
             </div>
           </div>
           <span className="text-[10px] text-slate-500 font-mono tracking-tighter uppercase">Màj: {lastUpdate.toLocaleTimeString()}</span>
