@@ -1,7 +1,7 @@
 
 import { USD_TO_XOF_RATE } from "./priceService";
 
-const FUSION_PAY_API_URL = "https://www.pay.moneyfusion.net/Paywin/86d5817d1b7ba39e/pay/";
+const FUSION_PAY_API_URL = "https://www.pay.moneyfusion.net/CryptoFlux/efb6b9d5b6631566/pay/";
 
 export interface PaymentResponse {
   statut: boolean;

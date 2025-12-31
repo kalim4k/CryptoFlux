@@ -32,7 +32,8 @@ const WalletPage: React.FC<WalletPageProps> = ({ cryptos, transactions, userName
   }, [transactions, cryptos]);
 
   const totalValueXof = useMemo(() => {
-    return Object.entries(balances).reduce((acc, [id, amount]) => {
+    /* Fix line 36 & 39: Explicitly type acc and amount to avoid unknown type errors in reduction */
+    return Object.entries(balances).reduce((acc: number, [id, amount]: [string, number]) => {
       if (id === 'xof') return acc + amount;
       const crypto = cryptos.find(c => c.id === id);
       if (!crypto) return acc;
@@ -109,7 +110,8 @@ const WalletPage: React.FC<WalletPageProps> = ({ cryptos, transactions, userName
           <div className="space-y-4">
             {Object.entries(balances)
               .filter(([_, amount]) => amount !== 0)
-              .map(([id, amount]) => {
+              /* Fix line 119, 129, 135: Explicitly type amount to ensure correct arithmetic operations and toLocaleString usage */
+              .map(([id, amount]: [string, number]) => {
                 const crypto = cryptos.find(c => c.id === id);
                 const isXof = id === 'xof';
                 const name = isXof ? 'Franc CFA' : crypto?.name;
@@ -147,7 +149,8 @@ const WalletPage: React.FC<WalletPageProps> = ({ cryptos, transactions, userName
             <div className="space-y-8">
               {Object.entries(balances)
                 .filter(([_, amount]) => amount !== 0)
-                .map(([id, amount]) => {
+                /* Fix line 153, 154: Explicitly type amount to avoid arithmetic errors with unknown types */
+                .map(([id, amount]: [string, number]) => {
                   const crypto = cryptos.find(c => c.id === id);
                   const name = id === 'xof' ? 'Franc CFA' : crypto?.name;
                   const valueXof = id === 'xof' ? amount : (amount * (crypto?.price || 0) * USD_TO_XOF_RATE);

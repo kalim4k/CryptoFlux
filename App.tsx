@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard';
 import WalletPage from './components/WalletPage';
 import HistoryPage from './components/HistoryPage';
 import ProfilePage from './components/ProfilePage';
+import EchangePage from './components/EchangePage';
 import Auth from './components/Auth';
 import { fetchRealTimePrices, fetchCryptoHistory, USD_TO_XOF_RATE, HistoryPoint } from './services/priceService';
 import { checkPaymentStatus } from './services/paymentService';
@@ -19,18 +20,37 @@ const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMsg, setNotificationMsg] = useState({ title: '', sub: '' });
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('dashboard'); // Par défaut sur Dashboard (Marché)
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [loadingPrices, setLoadingPrices] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [appLoading, setAppLoading] = useState(true);
+  const [userBalance, setUserBalance] = useState(0);
+
+  // Charger le profil utilisateur (balance)
+  const fetchUserProfile = useCallback(async (userId: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('balance')
+      .eq('id', userId)
+      .single();
+    
+    if (data) {
+      setUserBalance(data.balance || 0);
+    } else if (error && error.code === 'PGRST116') {
+      // Créer le profil s'il n'existe pas
+      await supabase.from('profiles').insert([{ id: userId, balance: 0 }]);
+      setUserBalance(0);
+    }
+  }, []);
 
   // Gestion de l'Auth Supabase
   useEffect(() => {
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
         setSession(session);
+        if (session) fetchUserProfile(session.user.id);
         setAppLoading(false);
       })
       .catch((err) => {
@@ -40,10 +60,11 @@ const App: React.FC = () => {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session) fetchUserProfile(session.user.id);
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [fetchUserProfile]);
 
   // Vérification des paiements Money Fusion (Callback URL)
   useEffect(() => {
@@ -55,35 +76,54 @@ const App: React.FC = () => {
         try {
           const result = await checkPaymentStatus(token);
           if (result.statut && result.data.statut === 'paid') {
-            // Éviter les doublons (simplifié ici, idéalement vérifié en DB)
-            const alreadyExists = transactions.some(t => t.id === `fusion-${token}`);
-            if (!alreadyExists) {
-              const newTx: Transaction = {
-                id: `fusion-${token}`,
-                type: 'CASH_IN',
-                fromCurrency: 'Mobile Money',
-                toCurrency: 'XOF',
-                fromAmount: result.data.Montant,
-                toAmount: result.data.Montant,
-                timestamp: Date.now(),
-                status: 'COMPLETED'
-              };
-              setTransactions(prev => [newTx, ...prev]);
-              setNotificationMsg({ title: 'Recharge validée !', sub: `${result.data.Montant} XOF ajoutés.` });
-              setShowNotification(true);
-              setTimeout(() => setShowNotification(false), 5000);
-            }
+            const amount = result.data.Montant;
+            
+            // 1. Mettre à jour la table 'profiles' dans Supabase
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('balance')
+              .eq('id', session.user.id)
+              .single();
+            
+            const currentBalance = profile?.balance || 0;
+            const newBalance = currentBalance + amount;
+
+            await supabase
+              .from('profiles')
+              .update({ balance: newBalance })
+              .eq('id', session.user.id);
+
+            setUserBalance(newBalance);
+
+            // 2. Ajouter à l'historique local
+            const newTx: Transaction = {
+              id: `fusion-${token}`,
+              type: 'CASH_IN',
+              fromCurrency: 'Mobile Money',
+              toCurrency: 'XOF',
+              fromAmount: amount,
+              toAmount: amount,
+              timestamp: Date.now(),
+              status: 'COMPLETED'
+            };
+            setTransactions(prev => [newTx, ...prev]);
+
+            setNotificationMsg({ 
+              title: 'Recharge réussie !', 
+              sub: `Votre compte a été crédité de ${amount.toLocaleString()} XOF.` 
+            });
+            setShowNotification(true);
+            setTimeout(() => setShowNotification(false), 5000);
           }
         } catch (err) {
           console.error("Erreur de vérification paiement:", err);
         } finally {
-          // Nettoyer l'URL
           window.history.replaceState({}, document.title, window.location.pathname);
         }
       };
       verifyPayment();
     }
-  }, [session, transactions.length]);
+  }, [session]);
 
   // Mise à jour des prix en temps réel
   const updatePrices = useCallback(async () => {
@@ -159,6 +199,8 @@ const App: React.FC = () => {
 
   const renderContent = () => {
     switch (activeTab) {
+      case 'echange':
+        return <EchangePage userName={session.user.email?.split('@')[0]} currentBalance={userBalance} />;
       case 'dashboard':
         return (
           <Dashboard 
@@ -190,7 +232,7 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-500 text-sm font-medium animate-pulse">Initialisation de la session...</p>
+          <p className="text-slate-500 text-sm font-medium animate-pulse">Chargement CryptoFlux...</p>
         </div>
       </div>
     );
@@ -213,6 +255,7 @@ const App: React.FC = () => {
         <div className="hidden md:flex items-center space-x-8">
           <div className="flex space-x-8 text-sm font-bold uppercase tracking-widest text-slate-500">
             <button onClick={() => setActiveTab('dashboard')} className={`transition-colors hover:text-indigo-400 ${activeTab === 'dashboard' ? 'text-indigo-400' : ''}`}>Marché</button>
+            <button onClick={() => setActiveTab('echange')} className={`transition-colors hover:text-indigo-400 ${activeTab === 'echange' ? 'text-indigo-400' : ''}`}>Échange</button>
             <button onClick={() => setActiveTab('wallet')} className={`transition-colors hover:text-indigo-400 ${activeTab === 'wallet' ? 'text-indigo-400' : ''}`}>Wallet</button>
             <button onClick={() => setActiveTab('history')} className={`transition-colors hover:text-indigo-400 ${activeTab === 'history' ? 'text-indigo-400' : ''}`}>Historique</button>
           </div>
@@ -220,13 +263,9 @@ const App: React.FC = () => {
             onClick={() => setActiveTab('profile')}
             className={`w-10 h-10 rounded-full border-2 transition-all flex items-center justify-center overflow-hidden ${activeTab === 'profile' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/10 hover:border-slate-500'}`}
           >
-            {session.user.user_metadata?.avatar_url ? (
-              <img src={session.user.user_metadata.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full bg-indigo-600 flex items-center justify-center font-bold text-[10px]">
-                {session.user.email?.substring(0, 2).toUpperCase()}
-              </div>
-            )}
+            <div className="w-full h-full bg-indigo-600 flex items-center justify-center font-bold text-[10px]">
+              {session.user.email?.substring(0, 2).toUpperCase()}
+            </div>
           </button>
         </div>
       </nav>
@@ -241,25 +280,17 @@ const App: React.FC = () => {
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
             <span className="text-[10px] font-black mt-1 uppercase">Marché</span>
           </button>
+          <button onClick={() => setActiveTab('echange')} className={`flex flex-col items-center flex-1 p-2.5 transition-all ${activeTab === 'echange' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+            <span className="text-[10px] font-black mt-1 uppercase">Échange</span>
+          </button>
           <button onClick={() => setActiveTab('wallet')} className={`flex flex-col items-center flex-1 p-2.5 transition-all ${activeTab === 'wallet' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             <span className="text-[10px] font-black mt-1 uppercase">Wallet</span>
           </button>
-          <div className="flex-1 flex justify-center -mt-9">
-            <button 
-              onClick={() => setActiveTab('dashboard')}
-              className="w-16 h-16 bg-indigo-600 rounded-full shadow-2xl shadow-indigo-500/40 flex items-center justify-center text-white border-[6px] border-slate-950 active:scale-90 transition-all"
-            >
-              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
-            </button>
-          </div>
           <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center flex-1 p-2.5 transition-all ${activeTab === 'history' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             <span className="text-[10px] font-black mt-1 uppercase">Historique</span>
-          </button>
-          <button onClick={() => setActiveTab('profile')} className={`flex flex-col items-center flex-1 p-2.5 transition-all ${activeTab === 'profile' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-            <span className="text-[10px] font-black mt-1 uppercase">Profil</span>
           </button>
         </div>
       </div>
