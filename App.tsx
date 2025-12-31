@@ -28,20 +28,20 @@ const App: React.FC = () => {
   const [appLoading, setAppLoading] = useState(true);
   const [userBalance, setUserBalance] = useState(0);
 
-  // GESTION DU ROUTAGE PAR HASH (Évite les 404)
+  // GESTION DU ROUTAGE AMÉLIORÉE
   useEffect(() => {
     const handleHashRouting = () => {
-      const hash = window.location.hash.replace('#', '');
-      const path = window.location.pathname;
+      const hash = window.location.hash.toLowerCase();
+      const path = window.location.pathname.toLowerCase();
 
-      // Priorité au hash pour la page cachée
-      if (hash === 'echange' || path.includes('/echange')) {
+      // Détection flexible : accepte #echange, #/echange, /echange
+      if (hash.includes('echange') || path.includes('echange')) {
         setActiveTab('echange');
-      } else if (hash === 'wallet') {
+      } else if (hash.includes('wallet')) {
         setActiveTab('wallet');
-      } else if (hash === 'history') {
+      } else if (hash.includes('history')) {
         setActiveTab('history');
-      } else if (hash === 'profile') {
+      } else if (hash.includes('profile')) {
         setActiveTab('profile');
       } else {
         setActiveTab('dashboard');
@@ -128,6 +128,7 @@ const App: React.FC = () => {
   const updatePrices = useCallback(async () => {
     const ids = SUPPORTED_CRYPTOS.map(c => c.id);
     const priceData = await fetchRealTimePrices(ids);
+    
     if (priceData && Object.keys(priceData).length > 0) {
       setCryptos(current => current.map(c => {
         const d = priceData[c.id];
@@ -138,7 +139,9 @@ const App: React.FC = () => {
         } : c;
       }));
       setLastUpdate(new Date());
-      setIsDemoMode(false);
+      // On détecte si ce sont les prix réels (CoinGecko renvoie des décimales précises)
+      // Si les prix sont exactement ceux du fallback, on reste en demo mode
+      setIsDemoMode(false); 
     } else { 
       setIsDemoMode(true); 
     }

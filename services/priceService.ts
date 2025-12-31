@@ -11,6 +11,7 @@ export interface HistoryPoint {
   price: number;
 }
 
+// Prix de secours basés sur le marché actuel approximatif
 const FALLBACK_PRICES: PriceData = {
   'bitcoin': { usd: 64230.50, usd_24h_change: 2.4 },
   'ethereum': { usd: 3450.12, usd_24h_change: -1.2 },
@@ -26,17 +27,25 @@ export const fetchRealTimePrices = async (ids: string[]): Promise<PriceData> => 
   try {
     const idsString = ids.join(',');
     const url = `https://api.coingecko.com/api/v3/simple/price?ids=${idsString}&vs_currencies=usd&include_24hr_change=true`;
-    const response = await fetch(url);
+    
+    // On ajoute un timestamp pour éviter le cache navigateur
+    const response = await fetch(`${url}&t=${Date.now()}`);
     
     if (!response.ok) {
-       console.warn(`CoinGecko API Error: ${response.status}. Using simulated data.`);
+       console.warn(`API CoinGecko non disponible (Status: ${response.status}). Utilisation des données simulées.`);
        return generateSimulatedData(ids);
     }
     
     const data = await response.json();
+    
+    // Vérification que les données ne sont pas vides
+    if (!data || Object.keys(data).length === 0) {
+      return generateSimulatedData(ids);
+    }
+    
     return data;
   } catch (error) {
-    console.debug("Info: CoinGecko inaccessible, passage en mode simulation.");
+    console.error("Erreur réseau API Prix:", error);
     return generateSimulatedData(ids);
   }
 };
@@ -45,7 +54,7 @@ export const fetchCryptoHistory = async (id: string): Promise<HistoryPoint[]> =>
   try {
     const url = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=7&interval=daily`;
     const response = await fetch(url);
-    if (!response.ok) throw new Error("History fetch failed");
+    if (!response.ok) throw new Error("Échec historique");
     
     const data = await response.json();
     return data.prices.map((p: [number, number]) => ({
@@ -61,11 +70,11 @@ const generateSimulatedData = (ids: string[]): PriceData => {
   const simulated: PriceData = {};
   ids.forEach(id => {
     const base = FALLBACK_PRICES[id] || { usd: 1.0, usd_24h_change: 0 };
-    // Simulation légère de mouvement
+    // Légère variation aléatoire pour simuler le mouvement (0.1%)
     const variation = 1 + (Math.random() * 0.002 - 0.001);
     simulated[id] = {
       usd: base.usd * variation,
-      usd_24h_change: base.usd_24h_change + (Math.random() * 0.2 - 0.1)
+      usd_24h_change: base.usd_24h_change + (Math.random() * 0.4 - 0.2)
     };
   });
   return simulated;
@@ -75,7 +84,7 @@ const generateSimulatedHistory = (id: string): HistoryPoint[] => {
   const basePrice = FALLBACK_PRICES[id]?.usd || 1000;
   return Array.from({ length: 7 }, (_, i) => ({
     date: new Date(Date.now() - (6 - i) * 24 * 60 * 60 * 1000).toLocaleDateString('fr-FR', { weekday: 'short' }),
-    price: basePrice * (0.95 + Math.random() * 0.1)
+    price: basePrice * (0.94 + Math.random() * 0.12)
   }));
 };
 

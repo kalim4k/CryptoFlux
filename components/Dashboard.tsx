@@ -28,13 +28,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
       <div className="lg:col-span-8 space-y-8">
         <div className="flex justify-between items-center mb-2 px-1">
-          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-            Marchés en Direct 
-            <span className="flex h-2 w-2 relative">
-              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isDemoMode ? 'bg-amber-400' : 'bg-emerald-400'}`}></span>
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${isDemoMode ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
-            </span>
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">
+              Marchés en Direct 
+            </h2>
+            <div className={`px-2 py-0.5 rounded-md flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest ${isDemoMode ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${isDemoMode ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400 animate-ping'}`}></span>
+              {isDemoMode ? 'Données de secours' : 'Prix réels CoinGecko'}
+            </div>
+          </div>
           <span className="text-[10px] text-slate-500 font-mono tracking-tighter uppercase">Màj: {lastUpdate.toLocaleTimeString()}</span>
         </div>
 
@@ -45,7 +47,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               onClick={() => setSelectedCrypto(crypto)}
               className={`p-4 min-w-[155px] rounded-2xl border transition-all text-left flex-shrink-0 ${
                 selectedCrypto.id === crypto.id 
-                ? 'bg-indigo-600/10 border-indigo-500 ring-1 ring-indigo-500' 
+                ? 'bg-indigo-600/10 border-indigo-500 ring-1 ring-indigo-500 shadow-lg shadow-indigo-500/10' 
                 : 'bg-slate-900 border-white/5 hover:border-slate-700'
               }`}
             >
@@ -55,9 +57,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                   {crypto.change24h > 0 ? '+' : ''}{crypto.change24h}%
                 </span>
               </div>
-              <div className="font-bold text-xs truncate">{crypto.name}</div>
-              <div className="text-sm font-mono font-bold tracking-tight">
-                {loadingPrices && crypto.price === 0 ? '...' : `$${crypto.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+              <div className="font-bold text-xs truncate text-white">{crypto.name}</div>
+              <div className="text-sm font-mono font-bold tracking-tight text-slate-300">
+                {loadingPrices && crypto.price === 0 ? '...' : `$${crypto.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
               </div>
             </button>
           ))}
@@ -69,11 +71,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               <h2 className="text-2xl font-bold flex items-center gap-2">
                 {selectedCrypto.name} <span className="text-slate-500 text-lg font-mono">/ USD</span>
               </h2>
-              <p className="text-slate-400 text-xs font-medium">Historique 7 jours (réel)</p>
+              <p className="text-slate-400 text-xs font-medium uppercase tracking-widest">Historique 7 derniers jours</p>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-mono font-bold tracking-tighter text-indigo-400">${selectedCrypto.price.toLocaleString()}</div>
-              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">≈ {(selectedCrypto.price * USD_TO_XOF_RATE).toLocaleString()} XOF</div>
+              <div className="text-2xl font-mono font-bold tracking-tighter text-indigo-400">${selectedCrypto.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">≈ {(selectedCrypto.price * USD_TO_XOF_RATE).toLocaleString(undefined, { maximumFractionDigits: 0 })} XOF</div>
             </div>
           </div>
           
