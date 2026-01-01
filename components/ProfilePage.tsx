@@ -4,9 +4,10 @@ import { supabase } from '../lib/supabase';
 
 interface ProfilePageProps {
   user: any;
+  balance: number;
 }
 
-const ProfilePage: React.FC<ProfilePageProps> = ({ user }) => {
+const ProfilePage: React.FC<ProfilePageProps> = ({ user, balance }) => {
   const handleSignOut = async () => {
     await supabase.auth.signOut();
   };
@@ -23,22 +24,31 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ user }) => {
       {/* Header Profile */}
       <div className="glass p-10 rounded-[3rem] relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 blur-[80px] rounded-full -mr-20 -mt-20"></div>
-        <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
-          <div className="relative">
-            <div className="w-32 h-32 rounded-[2.5rem] bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-5xl font-black shadow-2xl shadow-indigo-500/40 border-4 border-white/10">
-              {initiales}
+        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+          <div className="flex flex-col md:flex-row items-center gap-8">
+            <div className="relative">
+              <div className="w-32 h-32 rounded-[2.5rem] bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-5xl font-black shadow-2xl shadow-indigo-500/40 border-4 border-white/10">
+                {initiales}
+              </div>
+              <div className="absolute -bottom-2 -right-2 bg-emerald-500 p-2 rounded-2xl border-4 border-slate-900 shadow-lg">
+                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M2.166 4.9L9.03 9.122a2 2 0 001.938 0L17.834 4.9A2 2 0 0016 1.5H4a2 2 0 00-1.834 3.4zM1.5 8a2 2 0 00-1.5 2v5a2 2 0 002 2h16a2 2 0 002-2v-5a2 2 0 00-1.5-2l-7.07 4.35a4 4 0 01-3.86 0L1.5 8z" clipRule="evenodd" /></svg>
+              </div>
             </div>
-            <div className="absolute -bottom-2 -right-2 bg-emerald-500 p-2 rounded-2xl border-4 border-slate-900 shadow-lg">
-              <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M2.166 4.9L9.03 9.122a2 2 0 001.938 0L17.834 4.9A2 2 0 0016 1.5H4a2 2 0 00-1.834 3.4zM1.5 8a2 2 0 00-1.5 2v5a2 2 0 002 2h16a2 2 0 002-2v-5a2 2 0 00-1.5-2l-7.07 4.35a4 4 0 01-3.86 0L1.5 8z" clipRule="evenodd" /></svg>
+            <div className="text-center md:text-left space-y-2">
+              <h2 className="text-4xl font-black tracking-tighter text-white">{user?.email?.split('@')[0]}</h2>
+              <p className="text-slate-400 font-medium">{user?.email}</p>
+              <div className="flex flex-wrap justify-center md:justify-start gap-3 mt-4">
+                <span className="px-4 py-1.5 bg-indigo-500/20 text-indigo-400 rounded-full text-xs font-bold border border-indigo-500/20 uppercase tracking-widest">Membre depuis {memberSince}</span>
+                <span className="px-4 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-full text-xs font-bold border border-emerald-500/20 uppercase tracking-widest">Identité Vérifiée</span>
+              </div>
             </div>
           </div>
-          <div className="text-center md:text-left space-y-2">
-            <h2 className="text-4xl font-black tracking-tighter text-white">{user?.email?.split('@')[0]}</h2>
-            <p className="text-slate-400 font-medium">{user?.email}</p>
-            <div className="flex flex-wrap justify-center md:justify-start gap-3 mt-4">
-              <span className="px-4 py-1.5 bg-indigo-500/20 text-indigo-400 rounded-full text-xs font-bold border border-indigo-500/20 uppercase tracking-widest">Membre depuis {memberSince}</span>
-              <span className="px-4 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-full text-xs font-bold border border-emerald-500/20 uppercase tracking-widest">Identité Vérifiée</span>
-            </div>
+
+          {/* Solde Proéminent */}
+          <div className="bg-white/5 border border-white/10 p-6 rounded-[2rem] text-center md:text-right min-w-[200px]">
+             <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Solde Total</div>
+             <div className="text-3xl font-black text-emerald-400">{balance.toLocaleString()}</div>
+             <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Francs CFA (XOF)</div>
           </div>
         </div>
       </div>

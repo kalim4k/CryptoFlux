@@ -10,7 +10,7 @@ import ProfilePage from './components/ProfilePage';
 import EchangePage from './components/EchangePage';
 import ThankYouPage from './components/ThankYouPage';
 import Auth from './components/Auth';
-import { fetchRealTimePrices } from './services/priceService';
+import { fetchRealTimePrices, fetchCryptoHistory, HistoryPoint } from './services/priceService';
 import { checkPaymentStatus } from './services/paymentService';
 
 const App: React.FC = () => {
@@ -20,155 +20,135 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [appLoading, setAppLoading] = useState(true);
   const [cryptos, setCryptos] = useState<CryptoCurrency[]>(SUPPORTED_CRYPTOS);
+  const [selectedCrypto, setSelectedCrypto] = useState<CryptoCurrency>(SUPPORTED_CRYPTOS[0]);
+  const [historyData, setHistoryData] = useState<HistoryPoint[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [lastCreditedAmount, setLastCreditedAmount] = useState<number>(0);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
 
   const isVerifyingRef = useRef(false);
 
-  // RÉCUPÉRATION DU PROFIL DEPUIS SUPABASE
-  const fetchUserProfile = useCallback(async (userId: string) => {
+  // RÉCUPÉRATION DU PROFIL
+  const fetchUserProfile = useCallback(async (userId: string, userEmail?: string) => {
     if (!userId) return;
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('balance, full_name, username')
+        .select('balance, full_name')
         .eq('id', userId)
         .single();
       
       if (data) {
         setUserBalance(Number(data.balance) || 0);
-        setUserFullName(data.full_name || data.username || 'Utilisateur');
-      } else if (error) {
-        console.error("Erreur lecture profil:", error.message);
+        setUserFullName(data.full_name || userEmail?.split('@')[0] || 'Utilisateur');
       }
     } catch (err) {
-      console.error("Erreur système lecture profil:", err);
+      console.error("Erreur lecture profil:", err);
     }
   }, []);
 
-  // LOGIQUE ULTIME : CRÉDIT DE LA COLONNE 'balance' EN BASE DE DONNÉES
+  // RÉCUPÉRATION DE L'HISTORIQUE POUR LA COURBE
+  const updateHistory = useCallback(async (cryptoId: string) => {
+    setLoadingHistory(true);
+    try {
+      const data = await fetchCryptoHistory(cryptoId);
+      setHistoryData(data);
+    } catch (err) {
+      console.error("Erreur historique:", err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  // LOGIQUE DE CRÉDIT AUTOMATIQUE (POST-ACHAT FUSION PAY)
   const executeAutoCredit = useCallback(async (userId: string) => {
     if (isVerifyingRef.current) return;
 
-    // 1. EXTRACTION ROBUSTE DU TOKEN
-    // Gère : ?token=... OU #token=... OU #/page?token=...
-    const fullUrl = window.location.href;
-    const urlSearchParams = new URLSearchParams(window.location.search);
-    let token = urlSearchParams.get('token');
-
+    // Détection du token dans l'URL (Query ou Hash)
+    const urlParams = new URLSearchParams(window.location.search);
+    let token = urlParams.get('token');
+    
     if (!token) {
-      // Tente d'extraire depuis le hash
-      const hashPart = window.location.hash;
-      const hashParams = new URLSearchParams(hashPart.includes('?') ? hashPart.split('?')[1] : hashPart.replace('#', ''));
-      token = hashParams.get('token');
+      const hash = window.location.hash;
+      if (hash.includes('token=')) {
+        token = hash.split('token=')[1].split('&')[0];
+      }
     }
 
     if (!token) return;
 
     isVerifyingRef.current = true;
-    console.log("--- DÉBUT PROCESSUS CRÉDIT ---");
-    console.log("Token identifié:", token);
-
     try {
-      // 2. VÉRIFICATION DU STATUT CHEZ MONEY FUSION
       const result = await checkPaymentStatus(token);
-      const paymentData = result.data;
-      const status = paymentData?.statut?.toLowerCase();
+      const status = result.data?.statut?.toLowerCase();
 
-      console.log("Réponse Money Fusion:", result);
-
-      const isSuccess = result.statut && (status === 'paid' || status === 'success' || status === 'completed');
-
-      if (isSuccess) {
-        const amountToAdd = Number(paymentData.Montant);
-        console.log(`Paiement de ${amountToAdd} XOF validé.`);
-
-        // 3. RÉCUPÉRATION DU SOLDE FRAIS DEPUIS LA DB (Évite les désynchronisations)
-        const { data: freshProfile, error: fetchError } = await supabase
+      if (result.statut && (status === 'paid' || status === 'success')) {
+        const amountToAdd = Number(result.data.Montant);
+        
+        // On récupère le solde le plus récent
+        const { data: profile } = await supabase
           .from('profiles')
           .select('balance')
           .eq('id', userId)
           .single();
 
-        if (fetchError) throw new Error("Impossible de lire le solde actuel : " + fetchError.message);
+        const newBalance = Math.floor((Number(profile?.balance) || 0) + amountToAdd);
 
-        const currentDbBalance = Number(freshProfile?.balance || 0);
-        const finalBalance = Math.floor(currentDbBalance + amountToAdd); // int4 supporte les entiers
-
-        console.log(`Solde actuel DB: ${currentDbBalance}. Nouveau solde calculé: ${finalBalance}`);
-
-        // 4. MISE À JOUR ATOMIQUE DANS SUPABASE
-        const { error: updateError } = await supabase
+        const { error: upError } = await supabase
           .from('profiles')
-          .update({ balance: finalBalance })
+          .update({ balance: newBalance })
           .eq('id', userId);
 
-        if (updateError) {
-          throw new Error("Échec de la mise à jour SQL : " + updateError.message);
+        if (!upError) {
+          setUserBalance(newBalance);
+          setLastCreditedAmount(amountToAdd);
+          
+          // Nettoyage URL et redirection vers page de remerciement
+          const cleanUrl = window.location.origin + window.location.pathname + "#remerciement";
+          window.history.replaceState({}, document.title, cleanUrl);
+          setActiveTab('remerciement');
         }
-
-        console.log("--- CRÉDIT RÉUSSI EN BASE DE DONNÉES ---");
-        
-        // Mise à jour de l'interface
-        setUserBalance(finalBalance);
-        setLastCreditedAmount(amountToAdd);
-        
-        // Nettoyage de l'URL pour éviter de re-créditer au refresh
-        const cleanUrl = window.location.origin + window.location.pathname + "#remerciement";
-        window.history.replaceState({}, document.title, cleanUrl);
-        setActiveTab('remerciement');
-
-      } else {
-        console.log("Le paiement n'est pas encore prêt ou a échoué. Statut reçu:", status);
       }
-    } catch (err: any) {
-      console.error("CRASH DU PROCESSUS DE CRÉDIT:", err.message);
-      alert("Erreur de crédit automatique : " + err.message);
+    } catch (err) {
+      console.error("Erreur vérification paiement:", err);
     } finally {
       isVerifyingRef.current = false;
     }
   }, []);
 
+  // INITIALISATION
   useEffect(() => {
-    const startApp = async () => {
+    const init = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
       if (session) {
-        // Important: Fetch profile first
-        await fetchUserProfile(session.user.id);
-        // Then try auto-credit
+        await fetchUserProfile(session.user.id, session.user.email);
         await executeAutoCredit(session.user.id);
+        await updateHistory(selectedCrypto.id);
       }
       setAppLoading(false);
     };
-    startApp();
+    init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) fetchUserProfile(session.user.id);
+      if (session) fetchUserProfile(session.user.id, session.user.email);
     });
 
-    const routeManager = () => {
-      const h = window.location.hash.toLowerCase();
-      if (h.includes('remerciement')) setActiveTab('remerciement');
-      else if (h.includes('wallet')) setActiveTab('wallet');
-      else if (h.includes('echange')) setActiveTab('echange');
-      else if (h.includes('profile')) setActiveTab('profile');
-      else setActiveTab('dashboard');
-    };
-    window.addEventListener('hashchange', routeManager);
-    routeManager();
-
-    return () => {
-      subscription.unsubscribe();
-      window.removeEventListener('hashchange', routeManager);
-    };
+    return () => subscription.unsubscribe();
   }, [fetchUserProfile, executeAutoCredit]);
 
+  // MISE À JOUR PRIX & COURBE QUAND LA CRYPTO CHANGE
   useEffect(() => {
-    const updateMarketPrices = async () => {
-      const ids = SUPPORTED_CRYPTOS.map(c => c.id);
-      const data = await fetchRealTimePrices(ids);
+    if (session) {
+      updateHistory(selectedCrypto.id);
+    }
+  }, [selectedCrypto.id, session, updateHistory]);
+
+  useEffect(() => {
+    const updatePrices = async () => {
+      const data = await fetchRealTimePrices(SUPPORTED_CRYPTOS.map(c => c.id));
       if (data) {
         setCryptos(current => current.map(c => {
           const d = data[c.id];
@@ -177,37 +157,119 @@ const App: React.FC = () => {
         setLastUpdate(new Date());
       }
     };
-    updateMarketPrices();
-    const interval = setInterval(updateMarketPrices, 45000);
-    return () => clearInterval(interval);
+    updatePrices();
+    const timer = setInterval(updatePrices, 60000);
+    return () => clearInterval(timer);
   }, []);
 
-  if (appLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center font-bold text-indigo-400">Démarrage sécurisé...</div>;
+  // GESTION NAVIGATION HASH
+  useEffect(() => {
+    const handleHash = () => {
+      const h = window.location.hash.toLowerCase();
+      if (h.includes('remerciement')) setActiveTab('remerciement');
+      else if (h.includes('wallet')) setActiveTab('wallet');
+      else if (h.includes('echange')) setActiveTab('echange');
+      else if (h.includes('profile')) setActiveTab('profile');
+      else setActiveTab('dashboard');
+    };
+    window.addEventListener('hashchange', handleHash);
+    handleHash();
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, []);
+
+  if (appLoading) return (
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-4">
+      <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <p className="text-indigo-400 font-black text-xs uppercase tracking-widest">Initialisation sécurisée...</p>
+    </div>
+  );
+  
   if (!session) return <Auth />;
 
+  const handleExecuteSwap = (from: any, to: any, amount: number) => {
+    // Logique de simulation d'échange local
+    const newTx: Transaction = {
+      id: Math.random().toString(36).substr(2, 9),
+      type: 'SWAP',
+      fromCurrency: from.symbol,
+      toCurrency: to.symbol,
+      fromAmount: amount,
+      toAmount: (amount * (from.price || from.priceInUsd || 1)) / (to.price || to.priceInUsd || 1),
+      timestamp: Date.now(),
+      status: 'COMPLETED'
+    };
+    setTransactions([newTx, ...transactions]);
+    alert("Échange effectué avec succès (Simulation)");
+  };
+
   const renderView = () => {
-    if (activeTab === 'remerciement') return <ThankYouPage amount={lastCreditedAmount} onReturn={() => window.location.hash = 'wallet'} />;
-    if (activeTab === 'wallet') return <WalletPage cryptos={cryptos} transactions={[]} userName={userFullName} userBalance={userBalance} />;
-    if (activeTab === 'echange') return <EchangePage userName={userFullName} currentBalance={userBalance} />;
-    if (activeTab === 'profile') return <ProfilePage user={session.user} />;
-    return <Dashboard cryptos={cryptos} selectedCrypto={cryptos[0]} setSelectedCrypto={() => {}} historyData={[]} loadingHistory={false} loadingPrices={false} isDemoMode={false} lastUpdate={lastUpdate} transactions={[]} handleExecuteSwap={() => {}} />;
+    switch (activeTab) {
+      case 'remerciement': return <ThankYouPage amount={lastCreditedAmount} onReturn={() => window.location.hash = 'wallet'} />;
+      case 'wallet': return <WalletPage cryptos={cryptos} transactions={transactions} userName={userFullName} userBalance={userBalance} />;
+      case 'echange': return <EchangePage userName={userFullName} currentBalance={userBalance} />;
+      case 'profile': return <ProfilePage user={session.user} balance={userBalance} />;
+      default: return (
+        <Dashboard 
+          cryptos={cryptos} 
+          selectedCrypto={selectedCrypto} 
+          setSelectedCrypto={setSelectedCrypto} 
+          historyData={historyData} 
+          loadingHistory={loadingHistory} 
+          loadingPrices={false} 
+          isDemoMode={false} 
+          lastUpdate={lastUpdate} 
+          transactions={transactions} 
+          handleExecuteSwap={handleExecuteSwap} 
+        />
+      );
+    }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-white/5 px-6 py-4 flex justify-between items-center">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.location.hash = ''}>
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-black">C</div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-indigo-500/30">
+      <nav className="fixed top-0 left-0 right-0 z-[100] glass border-b border-white/5 px-6 py-4 flex justify-between items-center">
+        <div className="flex items-center gap-3 cursor-pointer group" onClick={() => window.location.hash = ''}>
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-black transition-transform group-hover:rotate-12">C</div>
           <span className="text-xl font-black tracking-tighter">CryptoFlux</span>
         </div>
         <div className="flex items-center gap-6">
-          <div className="text-right">
-            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1">Balance (DB)</div>
+          <div className="hidden sm:block text-right">
+            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1">Portefeuille Cash</div>
             <div className="text-sm font-bold text-emerald-400">{userBalance.toLocaleString()} XOF</div>
+          </div>
+          <div 
+            onClick={() => window.location.hash = 'profile'}
+            className="w-10 h-10 rounded-full bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center cursor-pointer hover:bg-indigo-500/40 transition-all active:scale-90"
+          >
+            <span className="text-xs font-black text-indigo-400">{session.user.email?.substring(0, 2).toUpperCase()}</span>
           </div>
         </div>
       </nav>
-      <main className="pt-24 pb-32 px-4 md:px-8 max-w-7xl mx-auto">{renderView()}</main>
+      
+      <main className="pt-24 pb-32 px-4 md:px-8 max-w-7xl mx-auto">
+        {renderView()}
+      </main>
+
+      <footer className="fixed bottom-0 left-0 right-0 z-50 glass border-t border-white/5 md:hidden">
+        <div className="flex justify-around items-center h-20">
+          {[
+            { id: '', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
+            { id: 'wallet', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
+            { id: 'echange', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
+            { id: 'profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' }
+          ].map(tab => (
+            <button 
+              key={tab.id}
+              onClick={() => window.location.hash = tab.id}
+              className={`p-3 rounded-2xl transition-all ${activeTab === (tab.id || 'dashboard') ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
+              </svg>
+            </button>
+          ))}
+        </div>
+      </footer>
     </div>
   );
 };
