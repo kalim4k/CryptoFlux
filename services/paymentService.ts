@@ -25,8 +25,8 @@ export interface PaymentStatusResponse {
 
 export const initiateDeposit = async (amount: number, phoneNumber: string, clientName: string): Promise<PaymentResponse> => {
   const currentUrl = new URL(window.location.href);
-  // Redirection explicite vers la page de remerciement après le paiement
-  const returnUrl = `${currentUrl.origin}${currentUrl.pathname}#remerciement`;
+  // On s'assure de revenir sur la page echange après le paiement
+  const returnUrl = `${currentUrl.origin}${currentUrl.pathname}#echange`;
 
   const paymentData = {
     totalPrice: amount,
