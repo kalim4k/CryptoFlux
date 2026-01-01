@@ -8,8 +8,10 @@ import WalletPage from './components/WalletPage';
 import HistoryPage from './components/HistoryPage';
 import ProfilePage from './components/ProfilePage';
 import EchangePage from './components/EchangePage';
+import ThankYouPage from './components/ThankYouPage';
 import Auth from './components/Auth';
 import { fetchRealTimePrices, fetchCryptoHistory, USD_TO_XOF_RATE, HistoryPoint } from './services/priceService';
+import { checkPaymentStatus } from './services/paymentService';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -23,12 +25,17 @@ const App: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [appLoading, setAppLoading] = useState(true);
+  
+  // Données utilisateur
   const [userBalance, setUserBalance] = useState(0);
+  const [userFullName, setUserFullName] = useState('');
+  const [lastCreditedAmount, setLastCreditedAmount] = useState<number>(0);
 
-  // ROUTAGE ET REDIRECTION BASÉE SUR LE HASH
   const handleHashRouting = useCallback(() => {
     const hash = window.location.hash.toLowerCase();
-    if (hash.includes('echange')) {
+    if (hash.includes('remerciement')) {
+      setActiveTab('remerciement');
+    } else if (hash.includes('echange')) {
       setActiveTab('echange');
     } else if (hash.includes('wallet')) {
       setActiveTab('wallet');
@@ -41,96 +48,110 @@ const App: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    handleHashRouting();
-    window.addEventListener('hashchange', handleHashRouting);
-    return () => window.removeEventListener('hashchange', handleHashRouting);
-  }, [handleHashRouting]);
-
   const fetchUserProfile = useCallback(async (userId: string) => {
     const { data, error } = await supabase
       .from('profiles')
-      .select('balance')
+      .select('balance, full_name, username')
       .eq('id', userId)
       .single();
     
     if (data) {
       setUserBalance(data.balance || 0);
+      setUserFullName(data.full_name || data.username || session?.user?.email?.split('@')[0] || 'Utilisateur');
     } else if (error && error.code === 'PGRST116') {
-      await supabase.from('profiles').insert([{ id: userId, balance: 0 }]);
+      const defaultName = session?.user?.email?.split('@')[0] || 'Utilisateur';
+      await supabase.from('profiles').insert([{ id: userId, balance: 0, full_name: defaultName }]);
       setUserBalance(0);
+      setUserFullName(defaultName);
+    }
+  }, [session]);
+
+  const verifyPaymentReturn = useCallback(async (userId: string) => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    
+    if (token) {
+      try {
+        const result = await checkPaymentStatus(token);
+        if (result.statut && result.data.statut === 'paid') {
+          const amountPaid = result.data.Montant;
+          
+          const { data: profile } = await supabase.from('profiles').select('balance').eq('id', userId).single();
+          const currentBalance = profile?.balance || 0;
+          const newBalance = currentBalance + amountPaid;
+          
+          const { error: updateError } = await supabase.from('profiles').update({ balance: newBalance }).eq('id', userId);
+          
+          if (!updateError) {
+            setUserBalance(newBalance);
+            setLastCreditedAmount(amountPaid);
+            
+            // On reste sur la page de remerciement (le hash a été mis par le service de paiement)
+            // On nettoie juste les paramètres de recherche (?token=...) mais on garde le hash
+            const newUrl = window.location.origin + window.location.pathname + "#remerciement";
+            window.history.replaceState({}, document.title, newUrl);
+            setActiveTab('remerciement');
+
+            const tx: Transaction = {
+              id: token,
+              type: 'CASH_IN',
+              fromCurrency: 'XOF',
+              toCurrency: 'XOF',
+              fromAmount: amountPaid,
+              toAmount: amountPaid,
+              timestamp: Date.now(),
+              status: 'COMPLETED'
+            };
+            setTransactions(prev => [tx, ...prev]);
+          }
+        }
+      } catch (err) {
+        console.error("Erreur post-paiement:", err);
+      }
     }
   }, []);
 
   useEffect(() => {
-    // Initialisation de la session
-    supabase.auth.getSession()
-      .then(({ data: { session } }) => {
-        setSession(session);
-        if (session) {
-          fetchUserProfile(session.user.id);
-          // On s'assure que l'onglet correspond au hash actuel dès le début
-          handleHashRouting();
-        }
-        setAppLoading(false);
-      })
-      .catch(() => setAppLoading(false));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) {
+        fetchUserProfile(session.user.id);
+        verifyPaymentReturn(session.user.id);
+        handleHashRouting();
+      }
+      setAppLoading(false);
+    });
 
-    // Gestion du changement d'état d'auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
         fetchUserProfile(session.user.id);
-        
-        // CORRECTION ICI : Ne pas rediriger si on est sur une page spécifique
-        const currentHash = window.location.hash.toLowerCase();
-        if (!currentHash || currentHash === '#' || currentHash === '') {
-          setActiveTab('dashboard');
-          window.location.hash = ''; 
-        } else {
-          // Si un hash existe (ex: #echange), handleHashRouting s'en occupe déjà via l'event
-          handleHashRouting();
-        }
+        handleHashRouting();
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [fetchUserProfile, handleHashRouting]);
+  }, [fetchUserProfile, handleHashRouting, verifyPaymentReturn]);
 
-  // CHARGEMENT DES PRIX (COINMARKETCAP)
   const updatePrices = useCallback(async () => {
     const ids = SUPPORTED_CRYPTOS.map(c => c.id);
     const priceData = await fetchRealTimePrices(ids);
-    
     if (priceData && Object.keys(priceData).length > 0) {
       setCryptos(current => current.map(c => {
         const d = priceData[c.id];
-        return d ? { 
-          ...c, 
-          price: d.usd, 
-          change24h: parseFloat(d.usd_24h_change?.toFixed(2) || '0') 
-        } : c;
+        return d ? { ...c, price: d.usd, change24h: parseFloat(d.usd_24h_change?.toFixed(2) || '0') } : c;
       }));
       setLastUpdate(new Date());
-      setIsDemoMode(false); 
-    } else { 
-      setIsDemoMode(true); 
     }
     setLoadingPrices(false);
   }, []);
 
-  // CHARGEMENT DE L'HISTORIQUE (POUR LA COURBE)
   useEffect(() => {
     const loadHistory = async () => {
       setLoadingHistory(true);
-      try {
-        const data = await fetchCryptoHistory(selectedCrypto.id);
-        setHistoryData(data);
-      } catch (err) {
-        console.error("Erreur historique:", err);
-      } finally {
-        setLoadingHistory(false);
-      }
+      const data = await fetchCryptoHistory(selectedCrypto.id);
+      setHistoryData(data);
+      setLoadingHistory(false);
     };
     loadHistory();
   }, [selectedCrypto]);
@@ -141,7 +162,6 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [updatePrices]);
 
-  // EXECUTION D'UN ECHANGE (SWAP)
   const handleExecuteSwap = (from: any, to: any, amount: number) => {
     const fromPrice = from.price || from.priceInUsd || 1;
     const toPrice = to.price || to.priceInUsd || 1;
@@ -157,30 +177,32 @@ const App: React.FC = () => {
       timestamp: Date.now(),
       status: 'COMPLETED'
     };
-
     setTransactions(prev => [newTx, ...prev]);
-    
-    alert(`Échange réussi : ${amount} ${from.symbol} convertis en ${toAmount.toFixed(to.id === 'xof' ? 0 : 6)} ${to.symbol}`);
+    alert(`Échange effectué avec succès !`);
     setActiveTab('wallet');
     window.location.hash = 'wallet';
   };
 
-  // VUE SPECIALE ECHANGE (SANS NAVIGATION STANDARD)
+  if (appLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>;
+
+  // Pages spéciales sans navigation standard
+  if (activeTab === 'remerciement') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col items-center justify-center p-4">
+        <ThankYouPage amount={lastCreditedAmount} onReturn={() => { window.location.hash = 'wallet'; setActiveTab('wallet'); }} />
+      </div>
+    );
+  }
+
   if (activeTab === 'echange') {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col items-center justify-center p-4">
-        <EchangePage 
-          userName={session?.user?.email?.split('@')[0] || 'Utilisateur'} 
-          currentBalance={userBalance} 
-        />
+        <EchangePage userName={userFullName} currentBalance={userBalance} />
         <p className="mt-8 text-slate-600 text-[10px] font-black uppercase tracking-widest">Zone de transaction PAYWIN</p>
       </div>
     );
   }
 
-  if (appLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>;
-  
-  // Auth block après avoir vérifié si on est sur la page Echange (qui a son propre Login)
   if (!session) return <Auth />;
 
   return (
@@ -197,7 +219,7 @@ const App: React.FC = () => {
             <button onClick={() => { window.location.hash = 'history'; setActiveTab('history'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'history' ? 'text-indigo-400' : ''}`}>Historique</button>
           </div>
           <button onClick={() => { window.location.hash = 'profile'; setActiveTab('profile'); }} className={`w-10 h-10 rounded-full border-2 transition-all flex items-center justify-center overflow-hidden ${activeTab === 'profile' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/10'}`}>
-            <div className="w-full h-full bg-indigo-600 flex items-center justify-center font-bold text-[10px] text-white">{session.user.email?.substring(0, 2).toUpperCase()}</div>
+            <div className="w-full h-full bg-indigo-600 flex items-center justify-center font-bold text-[10px] text-white">{userFullName.substring(0, 2).toUpperCase()}</div>
           </button>
         </div>
       </nav>
@@ -205,19 +227,13 @@ const App: React.FC = () => {
       <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-8">
         {activeTab === 'dashboard' && (
           <Dashboard 
-            cryptos={cryptos} 
-            selectedCrypto={selectedCrypto} 
-            setSelectedCrypto={setSelectedCrypto} 
-            historyData={historyData} 
-            loadingHistory={loadingHistory} 
-            loadingPrices={loadingPrices} 
-            isDemoMode={isDemoMode} 
-            lastUpdate={lastUpdate} 
-            transactions={transactions} 
+            cryptos={cryptos} selectedCrypto={selectedCrypto} setSelectedCrypto={setSelectedCrypto} 
+            historyData={historyData} loadingHistory={loadingHistory} loadingPrices={loadingPrices} 
+            isDemoMode={isDemoMode} lastUpdate={lastUpdate} transactions={transactions} 
             handleExecuteSwap={handleExecuteSwap} 
           />
         )}
-        {activeTab === 'wallet' && <WalletPage cryptos={cryptos} transactions={transactions} userName={session.user.email?.split('@')[0]} />}
+        {activeTab === 'wallet' && <WalletPage cryptos={cryptos} transactions={transactions} userName={userFullName} />}
         {activeTab === 'history' && <HistoryPage transactions={transactions} />}
         {activeTab === 'profile' && <ProfilePage user={session?.user} />}
       </main>

@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { initiateDeposit } from '../services/paymentService';
 import { supabase } from '../lib/supabase';
 
@@ -28,7 +28,6 @@ const EchangePage: React.FC<EchangePageProps> = ({ userName, currentBalance }) =
     setLoginError(null);
 
     try {
-      // Pour cet exemple, on valide contre Supabase mais avec une UI restrictive sans Signup
       const { error } = await supabase.auth.signInWithPassword({ 
         email: paywinEmail, 
         password: paywinPassword 
@@ -48,6 +47,7 @@ const EchangePage: React.FC<EchangePageProps> = ({ userName, currentBalance }) =
     setError(null);
 
     try {
+      // On utilise le nom passé par le parent (celui de la DB)
       const result = await initiateDeposit(selectedAmount, phone, userName);
       if (result.statut && result.url) {
         window.location.href = result.url;
@@ -61,7 +61,6 @@ const EchangePage: React.FC<EchangePageProps> = ({ userName, currentBalance }) =
     }
   };
 
-  // VUE : CONNEXION PAYWIN (SANS INSCRIPTION)
   if (!isUnlocked) {
     return (
       <div className="max-w-md mx-auto animate-in fade-in zoom-in duration-500 mt-12">
@@ -116,84 +115,94 @@ const EchangePage: React.FC<EchangePageProps> = ({ userName, currentBalance }) =
             </button>
           </form>
 
-          <div className="mt-8 text-center">
-            <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest leading-relaxed px-4">
-              La création de compte est désactivée pour cette section. Contactez un administrateur PAYWIN pour obtenir vos accès.
-            </p>
-          </div>
+          <p className="mt-8 text-[10px] text-slate-600 text-center font-bold uppercase tracking-widest italic">Protégé par cryptage de bout en bout</p>
         </div>
       </div>
     );
   }
 
-  // VUE : INTERFACE DE RECHARGE (DÉVERROUILLÉE)
   return (
-    <div className="max-w-2xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-700">
-      <div className="glass p-8 rounded-[2.5rem] border-indigo-500/20">
-        <div className="flex justify-between items-center mb-8">
+    <div className="max-w-2xl w-full animate-in fade-in slide-in-from-bottom-10 duration-700">
+      <div className="glass p-10 rounded-[3rem] border-white/10 shadow-2xl relative">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
           <div>
-            <h2 className="text-3xl font-black tracking-tighter text-white">Recharger mon compte</h2>
-            <p className="text-slate-400 text-sm font-medium">Choisissez le montant à créditer sur votre compte PAYWIN</p>
+            <h1 className="text-3xl font-black tracking-tighter text-white">Interface d'Échange</h1>
+            <p className="text-slate-400 font-medium">Bienvenue, <span className="text-indigo-400 font-bold">{userName}</span></p>
           </div>
-          <div className="text-right">
-            <div className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Solde Actuel</div>
-            <div className="text-2xl font-black text-indigo-400">{currentBalance.toLocaleString()} XOF</div>
+          <div className="bg-indigo-600/10 border border-indigo-500/20 px-6 py-3 rounded-2xl">
+            <span className="text-[10px] font-black text-slate-500 uppercase block mb-1">Votre Solde PAYWIN</span>
+            <span className="text-2xl font-black text-white">{currentBalance.toLocaleString()} <span className="text-indigo-400 text-sm">XOF</span></span>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 mb-8">
-          {AMOUNTS.map((amt) => (
+        <div className="space-y-10">
+          <div className="space-y-4">
+            <label className="text-[10px] text-slate-500 font-black uppercase tracking-widest ml-1">1. Choisissez un montant de recharge</label>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {AMOUNTS.map(amt => (
+                <button
+                  key={amt}
+                  onClick={() => setSelectedAmount(amt)}
+                  className={`p-4 rounded-2xl font-black border transition-all ${
+                    selectedAmount === amt 
+                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/30' 
+                    : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10'
+                  }`}
+                >
+                  {amt.toLocaleString()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <label className="text-[10px] text-slate-500 font-black uppercase tracking-widest ml-1">2. Numéro Mobile Money (Orange/Moov/MTN)</label>
+            <div className="relative">
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="Ex: 01 02 03 04 05"
+                className="w-full p-5 bg-white/5 border border-white/5 rounded-2xl outline-none focus:border-indigo-500 text-white font-bold text-xl placeholder:text-slate-700"
+              />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex gap-2">
+                <div className="w-8 h-8 bg-orange-500/20 rounded-lg"></div>
+                <div className="w-8 h-8 bg-blue-500/20 rounded-lg"></div>
+                <div className="w-8 h-8 bg-yellow-500/20 rounded-lg"></div>
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-400 text-sm font-bold text-center">
+              {error}
+            </div>
+          )}
+
+          <div className="pt-4">
             <button
-              key={amt}
-              onClick={() => setSelectedAmount(amt)}
-              className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center justify-center gap-2 ${
-                selectedAmount === amt
-                  ? 'bg-indigo-600/20 border-indigo-500 shadow-lg shadow-indigo-500/10 scale-[1.02]'
-                  : 'bg-white/5 border-white/5 hover:border-white/10'
-              }`}
+              onClick={handlePayment}
+              disabled={loading || !selectedAmount || !phone}
+              className="w-full py-6 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 rounded-[2rem] font-black text-xl text-white shadow-2xl shadow-indigo-600/40 transition-all flex items-center justify-center gap-4 group"
             >
-              <span className="text-2xl font-black text-white">{amt.toLocaleString()}</span>
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">FCFA</span>
+              {loading ? (
+                <div className="w-6 h-6 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+              ) : (
+                <>
+                  Démarrer le Paiement Money Fusion
+                  <svg className="w-6 h-6 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                </>
+              )}
             </button>
-          ))}
-        </div>
-
-        <div className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-[10px] text-slate-500 font-black uppercase tracking-widest ml-1">Numéro Mobile Money (Recharge)</label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="Ex: 0102030405"
-              className="w-full p-4 bg-white/5 border border-white/5 rounded-2xl outline-none focus:border-indigo-500 transition-all font-bold text-lg text-white"
-            />
+            <p className="mt-4 text-center text-slate-500 text-[10px] font-bold uppercase tracking-widest">Commission réseau : 0% • Instantané</p>
           </div>
-
-          <div className="p-4 bg-blue-500/5 rounded-2xl border border-blue-500/10 flex gap-4 items-center">
-            <div className="text-2xl">⚡</div>
-            <p className="text-xs text-slate-400 leading-relaxed font-medium">
-              Une fois le paiement validé sur **Money Fusion**, votre balance PAYWIN sera automatiquement créditée.
-            </p>
-          </div>
-
-          <button
-            onClick={handlePayment}
-            disabled={loading || !selectedAmount || !phone}
-            className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 rounded-2xl font-black text-white shadow-xl shadow-indigo-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-3"
-          >
-            {loading ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-            ) : (
-              <>Confirmer et Payer {selectedAmount ? `${selectedAmount.toLocaleString()} XOF` : ''}</>
-            )}
-          </button>
         </div>
       </div>
-      
-      <div className="text-center">
-         <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Sécurisé par Money Fusion Pay</p>
-      </div>
+
+      <button onClick={() => window.location.hash = ''} className="mt-8 text-slate-500 hover:text-indigo-400 text-sm font-bold flex items-center gap-2 mx-auto transition-colors">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+        Retour au Marché
+      </button>
     </div>
   );
 };

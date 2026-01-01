@@ -24,14 +24,14 @@ export interface PaymentStatusResponse {
 }
 
 export const initiateDeposit = async (amount: number, phoneNumber: string, clientName: string): Promise<PaymentResponse> => {
-  // On s'assure que l'URL de retour est propre
   const currentUrl = new URL(window.location.href);
-  const returnUrl = `${currentUrl.origin}${currentUrl.pathname}`;
+  // Redirection explicite vers la page de remerciement après le paiement
+  const returnUrl = `${currentUrl.origin}${currentUrl.pathname}#remerciement`;
 
   const paymentData = {
     totalPrice: amount,
     article: [
-      { "Recharge Compte CryptoFlux": amount }
+      { [`Recharge Compte de ${clientName}`]: amount }
     ],
     numeroSend: phoneNumber,
     nomclient: clientName,
