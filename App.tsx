@@ -1,15 +1,16 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './lib/supabase';
-import { SUPPORTED_CRYPTOS, SUPPORTED_FIATS } from './constants';
+import { SUPPORTED_CRYPTOS } from './constants';
 import { Transaction, CryptoCurrency } from './types';
 import Dashboard from './components/Dashboard';
 import WalletPage from './components/WalletPage';
 import HistoryPage from './components/HistoryPage';
 import ProfilePage from './components/ProfilePage';
 import EchangePage from './components/EchangePage';
+import ThankYouPage from './components/ThankYouPage';
 import Auth from './components/Auth';
-import { fetchRealTimePrices, fetchCryptoHistory, USD_TO_XOF_RATE, HistoryPoint } from './services/priceService';
+import { fetchRealTimePrices, fetchCryptoHistory, HistoryPoint } from './services/priceService';
 import { checkPaymentStatus } from './services/paymentService';
 
 const App: React.FC = () => {
@@ -22,16 +23,21 @@ const App: React.FC = () => {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [loadingPrices, setLoadingPrices] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(true);
-  const [isDemoMode, setIsDemoMode] = useState(false);
   const [appLoading, setAppLoading] = useState(true);
   
-  // Données utilisateur synchronisées avec la DB
-  const [userBalance, setUserBalance] = useState(0);
-  const [userFullName, setUserFullName] = useState('');
+  // États utilisateur synchronisés avec la DB
+  const [userBalance, setUserBalance] = useState<number>(0);
+  const [userFullName, setUserFullName] = useState<string>('');
+  const [profileLoading, setProfileLoading] = useState<boolean>(false);
+  const [lastCreditedAmount, setLastCreditedAmount] = useState<number>(0);
+
+  const isVerifyingRef = useRef(false);
 
   const handleHashRouting = useCallback(() => {
     const hash = window.location.hash.toLowerCase();
-    if (hash.includes('echange')) {
+    if (hash.includes('remerciement')) {
+      setActiveTab('remerciement');
+    } else if (hash.includes('echange')) {
       setActiveTab('echange');
     } else if (hash.includes('wallet')) {
       setActiveTab('wallet');
@@ -45,50 +51,71 @@ const App: React.FC = () => {
   }, []);
 
   const fetchUserProfile = useCallback(async (userId: string) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('balance, full_name, username')
-      .eq('id', userId)
-      .single();
-    
-    if (data) {
-      setUserBalance(data.balance || 0);
-      setUserFullName(data.full_name || data.username || session?.user?.email?.split('@')[0] || 'Utilisateur');
-    } else if (error && error.code === 'PGRST116') {
-      const defaultName = session?.user?.email?.split('@')[0] || 'Utilisateur';
-      await supabase.from('profiles').insert([{ id: userId, balance: 0, full_name: defaultName }]);
-      setUserBalance(0);
-      setUserFullName(defaultName);
+    if (!userId) return;
+    setProfileLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('balance, full_name, username')
+        .eq('id', userId)
+        .single();
+      
+      if (data) {
+        // IMPORTANT: On récupère la balance réelle de la DB
+        setUserBalance(data.balance || 0);
+        setUserFullName(data.full_name || data.username || 'Utilisateur');
+      } else if (error && error.code === 'PGRST116') {
+        const { data: { user } } = await supabase.auth.getUser();
+        const defaultName = user?.email?.split('@')[0] || 'Utilisateur';
+        await supabase.from('profiles').insert([{ id: userId, balance: 0, full_name: defaultName }]);
+        setUserBalance(0);
+        setUserFullName(defaultName);
+      }
+    } catch (err) {
+      console.error("Erreur de récupération du profil:", err);
+    } finally {
+      setProfileLoading(false);
     }
-  }, [session]);
+  }, []);
 
   const verifyPaymentReturn = useCallback(async (userId: string) => {
+    if (isVerifyingRef.current) return;
     const params = new URLSearchParams(window.location.search);
     const token = params.get('token');
     
     if (token) {
+      isVerifyingRef.current = true;
       try {
         const result = await checkPaymentStatus(token);
         if (result.statut && result.data.statut === 'paid') {
           const amountPaid = result.data.Montant;
           
-          // Récupérer le solde actuel pour éviter les erreurs de désynchronisation
-          const { data: profile } = await supabase.from('profiles').select('balance').eq('id', userId).single();
+          // Récupération du solde actuel le plus récent avant mise à jour
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('balance')
+            .eq('id', userId)
+            .single();
+          
           const currentBalance = profile?.balance || 0;
           const newBalance = currentBalance + amountPaid;
           
-          // Mettre à jour Supabase
-          const { error: updateError } = await supabase.from('profiles').update({ balance: newBalance }).eq('id', userId);
+          // Mise à jour physique dans Supabase
+          const { error: updateError } = await supabase
+            .from('profiles')
+            .update({ balance: newBalance })
+            .eq('id', userId);
           
           if (!updateError) {
             setUserBalance(newBalance);
-            // Notification et nettoyage de l'URL
-            alert(`Succès ! Votre compte a été crédité de ${amountPaid} XOF.`);
-            const newUrl = window.location.origin + window.location.pathname + window.location.hash;
-            window.history.replaceState({}, document.title, newUrl);
+            setLastCreditedAmount(amountPaid);
             
-            // Ajouter à l'historique
-            const tx: Transaction = {
+            // On nettoie l'URL et on affiche le succès
+            const cleanUrl = window.location.origin + window.location.pathname + "#remerciement";
+            window.history.replaceState({}, document.title, cleanUrl);
+            setActiveTab('remerciement');
+
+            setTransactions(prev => [{
               id: token,
               type: 'CASH_IN',
               fromCurrency: 'XOF',
@@ -97,41 +124,43 @@ const App: React.FC = () => {
               toAmount: amountPaid,
               timestamp: Date.now(),
               status: 'COMPLETED'
-            };
-            setTransactions(prev => [tx, ...prev]);
+            }, ...prev]);
           }
         }
       } catch (err) {
-        console.error("Erreur de traitement du retour de paiement:", err);
+        console.error("Erreur vérification paiement:", err);
+      } finally {
+        isVerifyingRef.current = false;
       }
     }
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
       if (session) {
-        fetchUserProfile(session.user.id);
-        verifyPaymentReturn(session.user.id);
-        handleHashRouting();
+        await fetchUserProfile(session.user.id);
+        await verifyPaymentReturn(session.user.id);
       }
+      handleHashRouting();
       setAppLoading(false);
-    });
+    };
+
+    init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
         fetchUserProfile(session.user.id);
-        const currentHash = window.location.hash.toLowerCase();
-        if (!currentHash || currentHash === '#' || currentHash === '') {
-          setActiveTab('dashboard');
-        } else {
-          handleHashRouting();
-        }
       }
     });
 
-    return () => subscription.unsubscribe();
+    window.addEventListener('hashchange', handleHashRouting);
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('hashchange', handleHashRouting);
+    };
   }, [fetchUserProfile, handleHashRouting, verifyPaymentReturn]);
 
   const updatePrices = useCallback(async () => {
@@ -168,7 +197,7 @@ const App: React.FC = () => {
     const toPrice = to.price || to.priceInUsd || 1;
     const toAmount = (amount * fromPrice) / toPrice;
 
-    const newTx: Transaction = {
+    setTransactions(prev => [{
       id: Math.random().toString(36).substr(2, 9),
       type: 'SWAP',
       fromCurrency: from.symbol,
@@ -177,81 +206,109 @@ const App: React.FC = () => {
       toAmount: toAmount,
       timestamp: Date.now(),
       status: 'COMPLETED'
-    };
-    setTransactions(prev => [newTx, ...prev]);
+    }, ...prev]);
     alert(`Échange effectué avec succès !`);
-    setActiveTab('wallet');
     window.location.hash = 'wallet';
   };
 
-  if (appLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>;
-
-  if (activeTab === 'echange') {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col items-center justify-center p-4">
-        <EchangePage 
-          userName={userFullName} 
-          currentBalance={userBalance} 
-        />
-        <p className="mt-8 text-slate-600 text-[10px] font-black uppercase tracking-widest">Zone de transaction PAYWIN</p>
-      </div>
-    );
-  }
+  if (appLoading) return (
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-4">
+      <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <p className="text-slate-500 font-black text-[10px] uppercase tracking-widest animate-pulse">CryptoFlux Sécurisé...</p>
+    </div>
+  );
 
   if (!session) return <Auth />;
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col pb-24 md:pb-0">
-      <nav className="border-b border-white/5 py-4 px-6 flex justify-between items-center sticky top-0 bg-slate-950/80 backdrop-blur-md z-50">
-        <div className="flex items-center space-x-2 cursor-pointer" onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }}>
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/20 text-white">C</div>
-          <span className="text-xl font-bold tracking-tight">CryptoFlux</span>
+  const renderContent = () => {
+    if (activeTab === 'remerciement') {
+      return <ThankYouPage amount={lastCreditedAmount} onReturn={() => { window.location.hash = 'wallet'; }} />;
+    }
+
+    if (activeTab === 'echange') {
+      return profileLoading ? (
+        <div className="flex flex-col items-center gap-4 py-20">
+          <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-xs font-black uppercase tracking-widest text-slate-500">Accès PAYWIN...</p>
         </div>
-        <div className="hidden md:flex items-center space-x-8">
-          <div className="flex space-x-8 text-sm font-bold uppercase tracking-widest text-slate-500">
-            <button onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'dashboard' ? 'text-indigo-400' : ''}`}>Marché</button>
-            <button onClick={() => { window.location.hash = 'wallet'; setActiveTab('wallet'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'wallet' ? 'text-indigo-400' : ''}`}>Wallet</button>
-            <button onClick={() => { window.location.hash = 'history'; setActiveTab('history'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'history' ? 'text-indigo-400' : ''}`}>Historique</button>
+      ) : (
+        <EchangePage userName={userFullName} currentBalance={userBalance} />
+      );
+    }
+
+    switch (activeTab) {
+      case 'wallet': return <WalletPage cryptos={cryptos} transactions={transactions} userName={userFullName} />;
+      case 'history': return <HistoryPage transactions={transactions} />;
+      case 'profile': return <ProfilePage user={session?.user} />;
+      default: return (
+        <Dashboard 
+          cryptos={cryptos} selectedCrypto={selectedCrypto} setSelectedCrypto={setSelectedCrypto} 
+          historyData={historyData} loadingHistory={loadingHistory} loadingPrices={loadingPrices} 
+          isDemoMode={false} lastUpdate={lastUpdate} transactions={transactions} 
+          handleExecuteSwap={handleExecuteSwap} 
+        />
+      );
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+      <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-white/5 px-6 py-4 flex justify-between items-center">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.location.hash = ''}>
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-black text-lg">C</div>
+          <span className="text-xl font-black tracking-tighter">CryptoFlux</span>
+        </div>
+        
+        <div className="hidden md:flex items-center gap-8">
+          {['dashboard', 'wallet', 'history', 'profile'].map((tab) => (
+            <button
+              key={tab}
+              onClick={() => { window.location.hash = tab === 'dashboard' ? '' : tab; }}
+              className={`text-[10px] font-black uppercase tracking-[0.2em] transition-colors ${
+                activeTab === tab ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="text-right hidden sm:block">
+            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1">Balance Profile</div>
+            <div className="text-sm font-bold text-white leading-none">{userBalance.toLocaleString()} <span className="text-indigo-400">XOF</span></div>
           </div>
-          <button onClick={() => { window.location.hash = 'profile'; setActiveTab('profile'); }} className={`w-10 h-10 rounded-full border-2 transition-all flex items-center justify-center overflow-hidden ${activeTab === 'profile' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/10'}`}>
-            <div className="w-full h-full bg-indigo-600 flex items-center justify-center font-bold text-[10px] text-white">{userFullName.substring(0, 2).toUpperCase()}</div>
+          <button 
+            onClick={() => window.location.hash = 'echange'}
+            className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-indigo-500/20"
+          >
+            Échange
           </button>
         </div>
       </nav>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-8">
-        {activeTab === 'dashboard' && (
-          <Dashboard 
-            cryptos={cryptos} selectedCrypto={selectedCrypto} setSelectedCrypto={setSelectedCrypto} 
-            historyData={historyData} loadingHistory={loadingHistory} loadingPrices={loadingPrices} 
-            isDemoMode={isDemoMode} lastUpdate={lastUpdate} transactions={transactions} 
-            handleExecuteSwap={handleExecuteSwap} 
-          />
-        )}
-        {activeTab === 'wallet' && <WalletPage cryptos={cryptos} transactions={transactions} userName={userFullName} />}
-        {activeTab === 'history' && <HistoryPage transactions={transactions} />}
-        {activeTab === 'profile' && <ProfilePage user={session?.user} />}
+      <main className="pt-24 pb-32 px-4 md:px-8 max-w-7xl mx-auto">
+        {renderContent()}
       </main>
 
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-[100] px-4 pb-6 pt-2 bg-gradient-to-t from-slate-950 via-slate-950/98 to-transparent">
-        <div className="glass rounded-2xl flex items-center justify-between p-2 shadow-2xl ring-1 ring-white/5">
-          <button onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'dashboard' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
-             <span className="text-[10px] font-black mt-1 uppercase">Marché</span>
+      {/* Navigation Mobile */}
+      <div className="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 glass rounded-2xl border border-white/10 p-2 shadow-2xl flex gap-1">
+        {[
+          { id: 'dashboard', icon: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
+          { id: 'wallet', icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
+          { id: 'history', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+          { id: 'profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' }
+        ].map(item => (
+          <button
+            key={item.id}
+            onClick={() => { window.location.hash = item.id === 'dashboard' ? '' : item.id; }}
+            className={`p-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+            </svg>
           </button>
-          <button onClick={() => { window.location.hash = 'wallet'; setActiveTab('wallet'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'wallet' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-             <span className="text-[10px] font-black mt-1 uppercase">Wallet</span>
-          </button>
-          <button onClick={() => { window.location.hash = 'history'; setActiveTab('history'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'history' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-             <span className="text-[10px] font-black mt-1 uppercase">Historique</span>
-          </button>
-          <button onClick={() => { window.location.hash = 'profile'; setActiveTab('profile'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'profile' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-             <span className="text-[10px] font-black mt-1 uppercase">Profil</span>
-          </button>
-        </div>
+        ))}
       </div>
     </div>
   );
