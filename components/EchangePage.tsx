@@ -35,7 +35,7 @@ const EchangePage: React.FC<EchangePageProps> = ({ userName, currentBalance }) =
       if (error) throw error;
       setIsUnlocked(true);
     } catch (err: any) {
-      setLoginError("Identifiants PAYWIN incorrects. Seuls les comptes enregistants sont autorisés.");
+      setLoginError("Identifiants PAYWIN incorrects. Seuls les comptes enregistrés sont autorisés.");
     } finally {
       setLoginLoading(false);
     }
@@ -62,7 +62,7 @@ const EchangePage: React.FC<EchangePageProps> = ({ userName, currentBalance }) =
 
   if (!isUnlocked) {
     return (
-      <div className="max-w-md mx-auto animate-in fade-in zoom-in duration-500 mt-12">
+      <div className="max-w-md mx-auto animate-in fade-in zoom-in duration-500">
         <div className="glass p-8 rounded-[2.5rem] border-indigo-500/20 shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10">
             <div className="w-24 h-24 bg-white rounded-full -mr-12 -mt-12"></div>
@@ -70,7 +70,7 @@ const EchangePage: React.FC<EchangePageProps> = ({ userName, currentBalance }) =
           
           <div className="flex flex-col items-center mb-10">
             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center font-black text-3xl shadow-xl shadow-indigo-500/20 mb-4 text-white">P</div>
-            <h2 className="text-xl font-black text-white text-center">Ravi de vous revoir,<br/><span className="text-indigo-400">{userName}</span></h2>
+            <h2 className="text-xl font-black text-white text-center leading-tight">Ravi de vous revoir,<br/><span className="text-indigo-400">{userName}</span></h2>
             <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-4 bg-slate-800/50 px-3 py-1 rounded-full border border-white/5">Veuillez déverrouiller PAYWIN</p>
           </div>
 
