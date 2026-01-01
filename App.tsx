@@ -26,9 +26,10 @@ const App: React.FC = () => {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [appLoading, setAppLoading] = useState(true);
   
-  // Données utilisateur
+  // Données utilisateur synchronisées
   const [userBalance, setUserBalance] = useState(0);
   const [userFullName, setUserFullName] = useState('');
+  const [profileLoading, setProfileLoading] = useState(true);
   const [lastCreditedAmount, setLastCreditedAmount] = useState<number>(0);
 
   const handleHashRouting = useCallback(() => {
@@ -49,6 +50,7 @@ const App: React.FC = () => {
   }, []);
 
   const fetchUserProfile = useCallback(async (userId: string) => {
+    setProfileLoading(true);
     const { data, error } = await supabase
       .from('profiles')
       .select('balance, full_name, username')
@@ -57,13 +59,15 @@ const App: React.FC = () => {
     
     if (data) {
       setUserBalance(data.balance || 0);
-      setUserFullName(data.full_name || data.username || session?.user?.email?.split('@')[0] || 'Utilisateur');
+      const name = data.full_name || data.username || session?.user?.email?.split('@')[0] || 'Utilisateur';
+      setUserFullName(name);
     } else if (error && error.code === 'PGRST116') {
       const defaultName = session?.user?.email?.split('@')[0] || 'Utilisateur';
       await supabase.from('profiles').insert([{ id: userId, balance: 0, full_name: defaultName }]);
       setUserBalance(0);
       setUserFullName(defaultName);
     }
+    setProfileLoading(false);
   }, [session]);
 
   const verifyPaymentReturn = useCallback(async (userId: string) => {
@@ -76,6 +80,7 @@ const App: React.FC = () => {
         if (result.statut && result.data.statut === 'paid') {
           const amountPaid = result.data.Montant;
           
+          // Mise à jour atomique du solde dans Supabase
           const { data: profile } = await supabase.from('profiles').select('balance').eq('id', userId).single();
           const currentBalance = profile?.balance || 0;
           const newBalance = currentBalance + amountPaid;
@@ -86,8 +91,7 @@ const App: React.FC = () => {
             setUserBalance(newBalance);
             setLastCreditedAmount(amountPaid);
             
-            // On reste sur la page de remerciement (le hash a été mis par le service de paiement)
-            // On nettoie juste les paramètres de recherche (?token=...) mais on garde le hash
+            // Redirection vers la page de remerciement
             const newUrl = window.location.origin + window.location.pathname + "#remerciement";
             window.history.replaceState({}, document.title, newUrl);
             setActiveTab('remerciement');
@@ -185,7 +189,9 @@ const App: React.FC = () => {
 
   if (appLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>;
 
-  // Pages spéciales sans navigation standard
+  if (!session) return <Auth />;
+
+  // Pages spéciales
   if (activeTab === 'remerciement') {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col items-center justify-center p-4">
@@ -197,20 +203,25 @@ const App: React.FC = () => {
   if (activeTab === 'echange') {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col items-center justify-center p-4">
-        <EchangePage userName={userFullName} currentBalance={userBalance} />
+        {profileLoading ? (
+          <div className="flex flex-col items-center gap-4">
+             <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+             <p className="text-xs font-black uppercase tracking-widest text-slate-500">Sécurisation de la connexion...</p>
+          </div>
+        ) : (
+          <EchangePage userName={userFullName} currentBalance={userBalance} />
+        )}
         <p className="mt-8 text-slate-600 text-[10px] font-black uppercase tracking-widest">Zone de transaction PAYWIN</p>
       </div>
     );
   }
-
-  if (!session) return <Auth />;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col pb-24 md:pb-0">
       <nav className="border-b border-white/5 py-4 px-6 flex justify-between items-center sticky top-0 bg-slate-950/80 backdrop-blur-md z-50">
         <div className="flex items-center space-x-2 cursor-pointer" onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }}>
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/20 text-white">C</div>
-          <span className="text-xl font-bold tracking-tight">CryptoFlux</span>
+          <span className="text-xl font-bold tracking-tight text-white">CryptoFlux</span>
         </div>
         <div className="hidden md:flex items-center space-x-8">
           <div className="flex space-x-8 text-sm font-bold uppercase tracking-widest text-slate-500">
