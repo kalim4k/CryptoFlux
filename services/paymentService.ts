@@ -24,14 +24,14 @@ export interface PaymentStatusResponse {
 }
 
 export const initiateDeposit = async (amount: number, phoneNumber: string, clientName: string): Promise<PaymentResponse> => {
+  // On s'assure que l'URL de retour est propre
   const currentUrl = new URL(window.location.href);
-  // On s'assure de revenir sur la page echange après le paiement
-  const returnUrl = `${currentUrl.origin}${currentUrl.pathname}#echange`;
+  const returnUrl = `${currentUrl.origin}${currentUrl.pathname}`;
 
   const paymentData = {
     totalPrice: amount,
     article: [
-      { [`Recharge Compte de ${clientName}`]: amount }
+      { "Recharge Compte CryptoFlux": amount }
     ],
     numeroSend: phoneNumber,
     nomclient: clientName,
