@@ -15,7 +15,8 @@ export interface PaymentStatusResponse {
   data: {
     tokenPay: string;
     Montant: number;
-    statut: "pending" | "paid" | "failure" | "no paid";
+    // Added "completed" to the union type to avoid type mismatch in App.tsx comparison logic
+    statut: "pending" | "paid" | "failure" | "no paid" | "success" | "completed";
     nomclient: string;
     numeroSend: string;
     createdAt: string;

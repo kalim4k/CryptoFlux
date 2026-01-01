@@ -1,247 +1,213 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './lib/supabase';
-import { SUPPORTED_CRYPTOS, SUPPORTED_FIATS } from './constants';
+import { SUPPORTED_CRYPTOS } from './constants';
 import { Transaction, CryptoCurrency } from './types';
 import Dashboard from './components/Dashboard';
 import WalletPage from './components/WalletPage';
 import HistoryPage from './components/HistoryPage';
 import ProfilePage from './components/ProfilePage';
 import EchangePage from './components/EchangePage';
+import ThankYouPage from './components/ThankYouPage';
 import Auth from './components/Auth';
-import { fetchRealTimePrices, fetchCryptoHistory, USD_TO_XOF_RATE, HistoryPoint } from './services/priceService';
+import { fetchRealTimePrices } from './services/priceService';
+import { checkPaymentStatus } from './services/paymentService';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
-  const [cryptos, setCryptos] = useState<CryptoCurrency[]>(SUPPORTED_CRYPTOS);
-  const [selectedCrypto, setSelectedCrypto] = useState(SUPPORTED_CRYPTOS[0]);
-  const [historyData, setHistoryData] = useState<HistoryPoint[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [userBalance, setUserBalance] = useState<number>(0);
+  const [userFullName, setUserFullName] = useState<string>('');
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
-  const [loadingPrices, setLoadingPrices] = useState(true);
-  const [loadingHistory, setLoadingHistory] = useState(true);
-  const [isDemoMode, setIsDemoMode] = useState(false);
   const [appLoading, setAppLoading] = useState(true);
-  const [userBalance, setUserBalance] = useState(0);
+  const [cryptos, setCryptos] = useState<CryptoCurrency[]>(SUPPORTED_CRYPTOS);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [lastCreditedAmount, setLastCreditedAmount] = useState<number>(0);
 
-  // ROUTAGE ET REDIRECTION BASÉE SUR LE HASH
-  const handleHashRouting = useCallback(() => {
-    const hash = window.location.hash.toLowerCase();
-    if (hash.includes('echange')) {
-      setActiveTab('echange');
-    } else if (hash.includes('wallet')) {
-      setActiveTab('wallet');
-    } else if (hash.includes('history')) {
-      setActiveTab('history');
-    } else if (hash.includes('profile')) {
-      setActiveTab('profile');
-    } else {
-      setActiveTab('dashboard');
-    }
-  }, []);
+  const isVerifyingRef = useRef(false);
 
-  useEffect(() => {
-    handleHashRouting();
-    window.addEventListener('hashchange', handleHashRouting);
-    return () => window.removeEventListener('hashchange', handleHashRouting);
-  }, [handleHashRouting]);
-
+  // RÉCUPÉRATION DU PROFIL DEPUIS SUPABASE
   const fetchUserProfile = useCallback(async (userId: string) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('balance')
-      .eq('id', userId)
-      .single();
-    
-    if (data) {
-      setUserBalance(data.balance || 0);
-    } else if (error && error.code === 'PGRST116') {
-      await supabase.from('profiles').insert([{ id: userId, balance: 0 }]);
-      setUserBalance(0);
+    if (!userId) return;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('balance, full_name, username')
+        .eq('id', userId)
+        .single();
+      
+      if (data) {
+        setUserBalance(Number(data.balance) || 0);
+        setUserFullName(data.full_name || data.username || 'Utilisateur');
+      } else if (error) {
+        console.error("Erreur lecture profil:", error.message);
+      }
+    } catch (err) {
+      console.error("Erreur système lecture profil:", err);
+    }
+  }, []);
+
+  // LOGIQUE ULTIME : CRÉDIT DE LA COLONNE 'balance' EN BASE DE DONNÉES
+  const executeAutoCredit = useCallback(async (userId: string) => {
+    if (isVerifyingRef.current) return;
+
+    // 1. EXTRACTION ROBUSTE DU TOKEN
+    // Gère : ?token=... OU #token=... OU #/page?token=...
+    const fullUrl = window.location.href;
+    const urlSearchParams = new URLSearchParams(window.location.search);
+    let token = urlSearchParams.get('token');
+
+    if (!token) {
+      // Tente d'extraire depuis le hash
+      const hashPart = window.location.hash;
+      const hashParams = new URLSearchParams(hashPart.includes('?') ? hashPart.split('?')[1] : hashPart.replace('#', ''));
+      token = hashParams.get('token');
+    }
+
+    if (!token) return;
+
+    isVerifyingRef.current = true;
+    console.log("--- DÉBUT PROCESSUS CRÉDIT ---");
+    console.log("Token identifié:", token);
+
+    try {
+      // 2. VÉRIFICATION DU STATUT CHEZ MONEY FUSION
+      const result = await checkPaymentStatus(token);
+      const paymentData = result.data;
+      const status = paymentData?.statut?.toLowerCase();
+
+      console.log("Réponse Money Fusion:", result);
+
+      const isSuccess = result.statut && (status === 'paid' || status === 'success' || status === 'completed');
+
+      if (isSuccess) {
+        const amountToAdd = Number(paymentData.Montant);
+        console.log(`Paiement de ${amountToAdd} XOF validé.`);
+
+        // 3. RÉCUPÉRATION DU SOLDE FRAIS DEPUIS LA DB (Évite les désynchronisations)
+        const { data: freshProfile, error: fetchError } = await supabase
+          .from('profiles')
+          .select('balance')
+          .eq('id', userId)
+          .single();
+
+        if (fetchError) throw new Error("Impossible de lire le solde actuel : " + fetchError.message);
+
+        const currentDbBalance = Number(freshProfile?.balance || 0);
+        const finalBalance = Math.floor(currentDbBalance + amountToAdd); // int4 supporte les entiers
+
+        console.log(`Solde actuel DB: ${currentDbBalance}. Nouveau solde calculé: ${finalBalance}`);
+
+        // 4. MISE À JOUR ATOMIQUE DANS SUPABASE
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update({ balance: finalBalance })
+          .eq('id', userId);
+
+        if (updateError) {
+          throw new Error("Échec de la mise à jour SQL : " + updateError.message);
+        }
+
+        console.log("--- CRÉDIT RÉUSSI EN BASE DE DONNÉES ---");
+        
+        // Mise à jour de l'interface
+        setUserBalance(finalBalance);
+        setLastCreditedAmount(amountToAdd);
+        
+        // Nettoyage de l'URL pour éviter de re-créditer au refresh
+        const cleanUrl = window.location.origin + window.location.pathname + "#remerciement";
+        window.history.replaceState({}, document.title, cleanUrl);
+        setActiveTab('remerciement');
+
+      } else {
+        console.log("Le paiement n'est pas encore prêt ou a échoué. Statut reçu:", status);
+      }
+    } catch (err: any) {
+      console.error("CRASH DU PROCESSUS DE CRÉDIT:", err.message);
+      alert("Erreur de crédit automatique : " + err.message);
+    } finally {
+      isVerifyingRef.current = false;
     }
   }, []);
 
   useEffect(() => {
-    // Initialisation de la session
-    supabase.auth.getSession()
-      .then(({ data: { session } }) => {
-        setSession(session);
-        if (session) {
-          fetchUserProfile(session.user.id);
-          // On s'assure que l'onglet correspond au hash actuel dès le début
-          handleHashRouting();
-        }
-        setAppLoading(false);
-      })
-      .catch(() => setAppLoading(false));
-
-    // Gestion du changement d'état d'auth
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const startApp = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
       if (session) {
-        fetchUserProfile(session.user.id);
-        
-        // CORRECTION ICI : Ne pas rediriger si on est sur une page spécifique
-        const currentHash = window.location.hash.toLowerCase();
-        if (!currentHash || currentHash === '#' || currentHash === '') {
-          setActiveTab('dashboard');
-          window.location.hash = ''; 
-        } else {
-          // Si un hash existe (ex: #echange), handleHashRouting s'en occupe déjà via l'event
-          handleHashRouting();
-        }
+        // Important: Fetch profile first
+        await fetchUserProfile(session.user.id);
+        // Then try auto-credit
+        await executeAutoCredit(session.user.id);
       }
+      setAppLoading(false);
+    };
+    startApp();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) fetchUserProfile(session.user.id);
     });
 
-    return () => subscription.unsubscribe();
-  }, [fetchUserProfile, handleHashRouting]);
+    const routeManager = () => {
+      const h = window.location.hash.toLowerCase();
+      if (h.includes('remerciement')) setActiveTab('remerciement');
+      else if (h.includes('wallet')) setActiveTab('wallet');
+      else if (h.includes('echange')) setActiveTab('echange');
+      else if (h.includes('profile')) setActiveTab('profile');
+      else setActiveTab('dashboard');
+    };
+    window.addEventListener('hashchange', routeManager);
+    routeManager();
 
-  // CHARGEMENT DES PRIX (COINMARKETCAP)
-  const updatePrices = useCallback(async () => {
-    const ids = SUPPORTED_CRYPTOS.map(c => c.id);
-    const priceData = await fetchRealTimePrices(ids);
-    
-    if (priceData && Object.keys(priceData).length > 0) {
-      setCryptos(current => current.map(c => {
-        const d = priceData[c.id];
-        return d ? { 
-          ...c, 
-          price: d.usd, 
-          change24h: parseFloat(d.usd_24h_change?.toFixed(2) || '0') 
-        } : c;
-      }));
-      setLastUpdate(new Date());
-      setIsDemoMode(false); 
-    } else { 
-      setIsDemoMode(true); 
-    }
-    setLoadingPrices(false);
-  }, []);
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('hashchange', routeManager);
+    };
+  }, [fetchUserProfile, executeAutoCredit]);
 
-  // CHARGEMENT DE L'HISTORIQUE (POUR LA COURBE)
   useEffect(() => {
-    const loadHistory = async () => {
-      setLoadingHistory(true);
-      try {
-        const data = await fetchCryptoHistory(selectedCrypto.id);
-        setHistoryData(data);
-      } catch (err) {
-        console.error("Erreur historique:", err);
-      } finally {
-        setLoadingHistory(false);
+    const updateMarketPrices = async () => {
+      const ids = SUPPORTED_CRYPTOS.map(c => c.id);
+      const data = await fetchRealTimePrices(ids);
+      if (data) {
+        setCryptos(current => current.map(c => {
+          const d = data[c.id];
+          return d ? { ...c, price: d.usd, change24h: d.usd_24h_change } : c;
+        }));
+        setLastUpdate(new Date());
       }
     };
-    loadHistory();
-  }, [selectedCrypto]);
-
-  useEffect(() => {
-    updatePrices();
-    const interval = setInterval(updatePrices, 30000);
+    updateMarketPrices();
+    const interval = setInterval(updateMarketPrices, 45000);
     return () => clearInterval(interval);
-  }, [updatePrices]);
+  }, []);
 
-  // EXECUTION D'UN ECHANGE (SWAP)
-  const handleExecuteSwap = (from: any, to: any, amount: number) => {
-    const fromPrice = from.price || from.priceInUsd || 1;
-    const toPrice = to.price || to.priceInUsd || 1;
-    const toAmount = (amount * fromPrice) / toPrice;
-
-    const newTx: Transaction = {
-      id: Math.random().toString(36).substr(2, 9),
-      type: 'SWAP',
-      fromCurrency: from.symbol,
-      toCurrency: to.symbol,
-      fromAmount: amount,
-      toAmount: toAmount,
-      timestamp: Date.now(),
-      status: 'COMPLETED'
-    };
-
-    setTransactions(prev => [newTx, ...prev]);
-    
-    alert(`Échange réussi : ${amount} ${from.symbol} convertis en ${toAmount.toFixed(to.id === 'xof' ? 0 : 6)} ${to.symbol}`);
-    setActiveTab('wallet');
-    window.location.hash = 'wallet';
-  };
-
-  // VUE SPECIALE ECHANGE (SANS NAVIGATION STANDARD)
-  if (activeTab === 'echange') {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col items-center justify-center p-4">
-        <EchangePage 
-          userName={session?.user?.email?.split('@')[0] || 'Utilisateur'} 
-          currentBalance={userBalance} 
-        />
-        <p className="mt-8 text-slate-600 text-[10px] font-black uppercase tracking-widest">Zone de transaction PAYWIN</p>
-      </div>
-    );
-  }
-
-  if (appLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div></div>;
-  
-  // Auth block après avoir vérifié si on est sur la page Echange (qui a son propre Login)
+  if (appLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center font-bold text-indigo-400">Démarrage sécurisé...</div>;
   if (!session) return <Auth />;
 
+  const renderView = () => {
+    if (activeTab === 'remerciement') return <ThankYouPage amount={lastCreditedAmount} onReturn={() => window.location.hash = 'wallet'} />;
+    if (activeTab === 'wallet') return <WalletPage cryptos={cryptos} transactions={[]} userName={userFullName} userBalance={userBalance} />;
+    if (activeTab === 'echange') return <EchangePage userName={userFullName} currentBalance={userBalance} />;
+    if (activeTab === 'profile') return <ProfilePage user={session.user} />;
+    return <Dashboard cryptos={cryptos} selectedCrypto={cryptos[0]} setSelectedCrypto={() => {}} historyData={[]} loadingHistory={false} loadingPrices={false} isDemoMode={false} lastUpdate={lastUpdate} transactions={[]} handleExecuteSwap={() => {}} />;
+  };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col pb-24 md:pb-0">
-      <nav className="border-b border-white/5 py-4 px-6 flex justify-between items-center sticky top-0 bg-slate-950/80 backdrop-blur-md z-50">
-        <div className="flex items-center space-x-2 cursor-pointer" onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }}>
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/20 text-white">C</div>
-          <span className="text-xl font-bold tracking-tight">CryptoFlux</span>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-white/5 px-6 py-4 flex justify-between items-center">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.location.hash = ''}>
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-black">C</div>
+          <span className="text-xl font-black tracking-tighter">CryptoFlux</span>
         </div>
-        <div className="hidden md:flex items-center space-x-8">
-          <div className="flex space-x-8 text-sm font-bold uppercase tracking-widest text-slate-500">
-            <button onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'dashboard' ? 'text-indigo-400' : ''}`}>Marché</button>
-            <button onClick={() => { window.location.hash = 'wallet'; setActiveTab('wallet'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'wallet' ? 'text-indigo-400' : ''}`}>Wallet</button>
-            <button onClick={() => { window.location.hash = 'history'; setActiveTab('history'); }} className={`transition-colors hover:text-indigo-400 ${activeTab === 'history' ? 'text-indigo-400' : ''}`}>Historique</button>
+        <div className="flex items-center gap-6">
+          <div className="text-right">
+            <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1">Balance (DB)</div>
+            <div className="text-sm font-bold text-emerald-400">{userBalance.toLocaleString()} XOF</div>
           </div>
-          <button onClick={() => { window.location.hash = 'profile'; setActiveTab('profile'); }} className={`w-10 h-10 rounded-full border-2 transition-all flex items-center justify-center overflow-hidden ${activeTab === 'profile' ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/10'}`}>
-            <div className="w-full h-full bg-indigo-600 flex items-center justify-center font-bold text-[10px] text-white">{session.user.email?.substring(0, 2).toUpperCase()}</div>
-          </button>
         </div>
       </nav>
-
-      <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-8">
-        {activeTab === 'dashboard' && (
-          <Dashboard 
-            cryptos={cryptos} 
-            selectedCrypto={selectedCrypto} 
-            setSelectedCrypto={setSelectedCrypto} 
-            historyData={historyData} 
-            loadingHistory={loadingHistory} 
-            loadingPrices={loadingPrices} 
-            isDemoMode={isDemoMode} 
-            lastUpdate={lastUpdate} 
-            transactions={transactions} 
-            handleExecuteSwap={handleExecuteSwap} 
-          />
-        )}
-        {activeTab === 'wallet' && <WalletPage cryptos={cryptos} transactions={transactions} userName={session.user.email?.split('@')[0]} />}
-        {activeTab === 'history' && <HistoryPage transactions={transactions} />}
-        {activeTab === 'profile' && <ProfilePage user={session?.user} />}
-      </main>
-
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-[100] px-4 pb-6 pt-2 bg-gradient-to-t from-slate-950 via-slate-950/98 to-transparent">
-        <div className="glass rounded-2xl flex items-center justify-between p-2 shadow-2xl ring-1 ring-white/5">
-          <button onClick={() => { window.location.hash = ''; setActiveTab('dashboard'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'dashboard' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
-             <span className="text-[10px] font-black mt-1 uppercase">Marché</span>
-          </button>
-          <button onClick={() => { window.location.hash = 'wallet'; setActiveTab('wallet'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'wallet' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-             <span className="text-[10px] font-black mt-1 uppercase">Wallet</span>
-          </button>
-          <button onClick={() => { window.location.hash = 'history'; setActiveTab('history'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'history' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-             <span className="text-[10px] font-black mt-1 uppercase">Historique</span>
-          </button>
-          <button onClick={() => { window.location.hash = 'profile'; setActiveTab('profile'); }} className={`flex flex-col items-center flex-1 p-2.5 ${activeTab === 'profile' ? 'text-indigo-400 bg-indigo-500/10 rounded-xl' : 'text-slate-500'}`}>
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-             <span className="text-[10px] font-black mt-1 uppercase">Profil</span>
-          </button>
-        </div>
-      </div>
+      <main className="pt-24 pb-32 px-4 md:px-8 max-w-7xl mx-auto">{renderView()}</main>
     </div>
   );
 };

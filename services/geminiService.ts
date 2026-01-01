@@ -2,17 +2,14 @@
 import { GoogleGenAI } from "@google/genai";
 import { MarketInsight } from "../types";
 
-const getApiKey = (): string => {
-  try {
-    return (typeof process !== 'undefined' && process.env?.API_KEY) ? process.env.API_KEY : '';
-  } catch {
-    return '';
-  }
-};
+// Helper removed to use process.env.API_KEY directly in constructor as required.
 
+/**
+ * Service pour obtenir des analyses de marché via l'API Gemini.
+ */
 export const getMarketAnalysis = async (cryptoName: string): Promise<MarketInsight> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  // Always use the named parameter and process.env.API_KEY directly
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   try {
     const response = await ai.models.generateContent({
@@ -27,6 +24,7 @@ export const getMarketAnalysis = async (cryptoName: string): Promise<MarketInsig
     const sentimentMatch = text.match(/Bullish|Bearish|Neutral/i);
     const sentiment = (sentimentMatch ? sentimentMatch[0] : 'Neutral') as any;
     
+    // Extract website URLs from groundingChunks as required by guidelines
     const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
       title: chunk.web?.title || 'Source',
       uri: chunk.web?.uri || '#'
